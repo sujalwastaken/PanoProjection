@@ -1,0 +1,126 @@
+﻿Shader "Hidden/PanoramaProjection"
+{
+    Properties
+    {
+        _PanoramaTex ("Panorama", 2D) = "white" {}
+        _OverlayTex ("Drawing Overlay", 2D) = "black" {} 
+        _Perspective ("Perspective", Range(1, 100)) = 50
+        _FisheyePerspective ("Fisheye Perspective", Range(0, 100)) = 0
+        _MinFov ("Min FOV (deg)", Range(1, 179)) = 6.5
+        _MaxFov ("Max FOV (deg)", Range(1, 179)) = 160
+        _AspectRatio ("Aspect Ratio", Float) = 1.0
+        
+        // Cursor Props
+        _CursorUV ("Cursor Position (UV)", Vector) = (-1,-1,0,0)
+        _CursorRadius ("Cursor Radius (Y-Axis UV)", Float) = 0.05
+        _CursorColor ("Cursor Color", Color) = (1,1,1,0.5)
+    }
+    SubShader
+    {
+        Tags { "RenderType"="Opaque" }
+        Cull Off ZWrite Off ZTest Always
+
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "UnityCG.cginc"
+
+            struct appdata {
+                float4 vertex : POSITION;
+                float2 uv : TEXCOORD0;
+            };
+
+            struct v2f {
+                float2 uv : TEXCOORD0;
+                float4 vertex : SV_POSITION;
+            };
+
+            sampler2D _PanoramaTex;
+            sampler2D _OverlayTex;
+            float _Perspective;
+            float _FisheyePerspective;
+            float4x4 _CameraRotation; 
+            float _MinFov;
+            float _MaxFov;
+            float _AspectRatio;
+
+            float2 _CursorUV;
+            float _CursorRadius;
+            fixed4 _CursorColor;
+
+            v2f vert(appdata v) {
+                v2f o;
+                o.vertex = UnityObjectToClipPos(v.vertex);
+                o.uv = v.uv;
+                return o;
+            }
+
+            fixed4 frag(v2f i) : SV_Target {
+                const float INV_2PI = 1.0 / (2.0 * UNITY_PI);
+                const float INV_PI = 1.0 / UNITY_PI;
+
+                // --- PROJECTION ---
+                float2 coord = (i.uv - 0.5) * 2.0;
+                coord.x *= _AspectRatio;
+
+                float r = length(coord);
+                float3 rayDir = float3(0.0, 0.0, 1.0);
+
+                if (r > 1e-4) {
+                    float fisheyeAmount = _FisheyePerspective / 100.0;
+                    float t = (_Perspective - 1.0) / 99.0;
+                    float minScale = tan(_MinFov * 0.5 * UNITY_PI / 180.0);
+                    float maxScale = tan(_MaxFov * 0.5 * UNITY_PI / 180.0);
+                    float perspScale = lerp(minScale, maxScale, t);
+                    float scaledR = r * perspScale;
+                    
+                    float theta = lerp(atan(scaledR), 2.0 * atan(scaledR), fisheyeAmount * fisheyeAmount * (3.0 - 2.0 * fisheyeAmount));
+                    float sinTheta = sin(theta);
+                    float cosTheta = cos(theta);
+                    float2 dir2D = coord / r;
+
+                    rayDir = float3(dir2D.x * sinTheta, -dir2D.y * sinTheta, cosTheta);
+                }
+
+                float3 worldRay = mul((float3x3)_CameraRotation, normalize(rayDir));
+                float lon = atan2(worldRay.x, worldRay.z);
+                float lat = asin(clamp(worldRay.y, -1.0, 1.0));
+
+                float2 panoUV;
+                panoUV.x = frac(lon * INV_2PI + 0.5);
+                panoUV.y = saturate(0.5 - lat * INV_PI);
+
+                // --- COMPOSITE ---
+                fixed4 panoCol = tex2D(_PanoramaTex, panoUV);
+                fixed4 drawCol = tex2D(_OverlayTex, panoUV);
+                fixed4 finalCol = lerp(panoCol, drawCol, drawCol.a);
+
+                // --- CURSOR DRAWING ---
+                float dx = abs(panoUV.x - _CursorUV.x);
+                if (dx > 0.5) dx = 1.0 - dx; // Wrap X
+
+                float dy = panoUV.y - _CursorUV.y;
+
+                // 2:1 Aspect Ratio Correction:
+                // Width is 2x Height. To make a circle, we must multiply dx by 2.0.
+                float effectiveDistSq = (dx * 2.0 * dx * 2.0) + (dy * dy);
+                float radiusSq = _CursorRadius * _CursorRadius;
+
+                if (effectiveDistSq < radiusSq)
+                {
+                    // Ring Thickness (10% of radius)
+                    float innerRadiusSq = radiusSq * 0.81; // 0.9^2
+                    if (effectiveDistSq > innerRadiusSq)
+                    {
+                        return _CursorColor;
+                    }
+                }
+
+                return finalCol;
+            }
+            ENDCG
+        }
+    }
+}
