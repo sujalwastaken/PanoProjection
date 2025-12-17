@@ -16,15 +16,17 @@ public class PanoramaUI : MonoBehaviour
     private float fps;
     private float deltaTime = 0.0f;
     
-    // For Color Preview
+    // Textures for UI
     private Texture2D colorSwatch;
+    private Texture2D hueRainbowTexture;
+    private GUIStyle hueSliderStyle;
 
     private bool showUI = true;
 
     // Dimensions
     private float uiWidth = 450f;
     private float baseHeight = 510f; 
-    private float colorPickerHeight = 200f; // Height needed for color controls
+    private float colorPickerHeight = 160f; // Adjusted for single slider
     private float gridControlsHeight = 160f; 
 
     void Start()
@@ -33,10 +35,17 @@ public class PanoramaUI : MonoBehaviour
         painter = GetComponent<PanoramaPaintGPU>();
         cam = GetComponent<Camera>();
         
-        // Create a simple white texture for drawing the color preview box
+        // 1. Create White Swatch
         colorSwatch = new Texture2D(1, 1);
         colorSwatch.SetPixel(0, 0, Color.white);
         colorSwatch.Apply();
+
+        // 2. Create Rainbow Texture for the Slider
+        hueRainbowTexture = new Texture2D(128, 1);
+        for (int i = 0; i < 128; i++) {
+            hueRainbowTexture.SetPixel(i, 0, Color.HSVToRGB((float)i / 128f, 1, 1));
+        }
+        hueRainbowTexture.Apply();
     }
 
     void Update()
@@ -60,6 +69,12 @@ public class PanoramaUI : MonoBehaviour
         GUI.contentColor = textColor;
         GUI.skin.label.fontSize = 21;
 
+        // Init Custom Style once
+        if (hueSliderStyle == null) {
+            hueSliderStyle = new GUIStyle(GUI.skin.horizontalSlider);
+            hueSliderStyle.normal.background = hueRainbowTexture;
+        }
+
         if (!showUI)
         {
             GUILayout.BeginArea(new Rect(10, 10, 50, 50));
@@ -70,7 +85,7 @@ public class PanoramaUI : MonoBehaviour
 
         // --- DYNAMIC HEIGHT CALCULATION ---
         bool showGridControls = painter.showGrid || painter.enableSnapping;
-        bool showColorPicker = !painter.isEraser; // Only show color picker for Brush
+        bool showColorPicker = !painter.isEraser; 
 
         float currentHeight = baseHeight;
         if (showGridControls) currentHeight += gridControlsHeight;
@@ -144,40 +159,35 @@ public class PanoramaUI : MonoBehaviour
             GUILayout.BeginVertical(GUI.skin.box);
             DrawLabelWithShadow("Brush Color");
             
-            // --- FIX START: Use GUI.DrawTexture instead of Box ---
+            // --- SINGLE HUE SLIDER ---
+            GUILayout.Space(5);
+            
+            // Get current Hue
+            float h, s, v;
+            Color.RGBToHSV(painter.drawColor, out h, out s, out v);
+            
+            GUILayout.BeginHorizontal();
+            // Use custom rainbow style
+            float newH = GUILayout.HorizontalSlider(h, 0f, 1f, hueSliderStyle, GUI.skin.horizontalSliderThumb);
+            GUILayout.EndHorizontal();
+
+            // Only update if changed (Prevents button conflict)
+            if (Mathf.Abs(newH - h) > 0.001f)
+            {
+                // Force full saturation/value when picking from Hue slider
+                painter.drawColor = Color.HSVToRGB(newH, 1f, 1f);
+            }
+
+            // --- COLOR PREVIEW BOX ---
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            
-            // 1. Reserve the rectangle space
             Rect cRect = GUILayoutUtility.GetRect(uiWidth - 40, 20);
-            
-            // 2. Draw the texture stretched to fill that space
             Color oldC = GUI.color;
             GUI.color = painter.drawColor;
             GUI.DrawTexture(cRect, colorSwatch, ScaleMode.StretchToFill);
             GUI.color = oldC;
-            
             GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
-            // --- FIX END ---
-
-            // RGB Sliders
-            GUILayout.Space(5);
-            Color c = painter.drawColor;
-            
-            GUILayout.BeginHorizontal();
-            DrawLabelWithShadow("R", 20); c.r = GUILayout.HorizontalSlider(c.r, 0f, 1f);
-            GUILayout.EndHorizontal();
-            
-            GUILayout.BeginHorizontal();
-            DrawLabelWithShadow("G", 20); c.g = GUILayout.HorizontalSlider(c.g, 0f, 1f);
-            GUILayout.EndHorizontal();
-            
-            GUILayout.BeginHorizontal();
-            DrawLabelWithShadow("B", 20); c.b = GUILayout.HorizontalSlider(c.b, 0f, 1f);
-            GUILayout.EndHorizontal();
-
-            painter.drawColor = c;
 
             // Quick Presets
             GUILayout.BeginHorizontal();
