@@ -8,7 +8,7 @@ public class PanoramaUI : MonoBehaviour
     public float scrollSensitivity = 5.0f;
     public Color uiBackgroundColor = new Color(0, 0, 0, 0.5f);
     public Color textColor = Color.white;
-    public Color activeToolColor = Color.green;
+    public Color activeToolColor = Color.green; // This makes the text Green when active
 
     private PanoramaProjectionEffect projection;
     private PanoramaPaintGPU painter;
@@ -62,8 +62,8 @@ public class PanoramaUI : MonoBehaviour
         }
 
         // --- FULL UI MODE ---
-        float width = 400;
-        float height = 500;
+        float width = 450; // Widened slightly for grid text
+        float height = 650; // Heightened for new controls
         float padding = 10;
 
         GUILayout.BeginArea(new Rect(padding, padding, width, height), GUI.skin.box);
@@ -82,23 +82,40 @@ public class PanoramaUI : MonoBehaviour
         DrawLabelWithShadow($"H-FOV: {projection.calculatedHorizontalFOV:F1}  V-FOV: {projection.calculatedVerticalFOV:F1}");
         GUILayout.Space(10);
 
-        // --- Tools Status ---
+        // --- Tools Status (Brush / Eraser / Grid) ---
         GUILayout.BeginHorizontal();
-        GUI.color = painter.isEraser ? textColor : activeToolColor;
+        
+        // Brush
+        GUI.color = (!painter.isEraser) ? activeToolColor : textColor;
         GUILayout.Label("[Q] Brush");
-        GUI.color = painter.isEraser ? activeToolColor : textColor;
+
+        // Eraser
+        GUI.color = (painter.isEraser) ? activeToolColor : textColor;
         GUILayout.Label("[E] Eraser");
-        GUI.color = textColor;
+
+        // Grid (New)
+        GUI.color = (painter.useRuler) ? activeToolColor : textColor;
+        GUILayout.Label("[G] Grid Snap");
+
+        GUI.color = textColor; // Reset color
         GUILayout.EndHorizontal();
 
         GUILayout.Space(10);
-        DrawLabelWithShadow("Hide Window: [W]"); // Added reminder
+        
+        // --- Instructions ---
+        DrawLabelWithShadow("Hide Window: [W]"); 
         DrawLabelWithShadow("Undo: Ctrl+Z");
         DrawLabelWithShadow("Redo: Ctrl+Shift+Z");
         DrawLabelWithShadow("Save: Ctrl+S");
         DrawLabelWithShadow("Load: Ctrl+D");
+        
+        GUILayout.Space(5);
+        // New Grid Instructions
+        DrawLabelWithShadow("Align Grid to View: [Shift+G]");
+        DrawLabelWithShadow("Grid Snap: Hold [Shift]");
 
         GUILayout.Space(15);
+        
         // --- Controls ---
         DrawLabelWithShadow($"Perspective (Zoom): {projection.perspective:F1}");
         projection.perspective = GUILayout.HorizontalSlider(projection.perspective, 1f, 100f);
@@ -117,6 +134,16 @@ public class PanoramaUI : MonoBehaviour
         {
             DrawLabelWithShadow($"Brush Size: {painter.brushSize:F0}");
             painter.brushSize = GUILayout.HorizontalSlider(painter.brushSize, 1f, 200f);
+        }
+
+        // --- Grid Controls ---
+        if (painter.useRuler)
+        {
+            GUILayout.Space(10);
+            GUI.color = activeToolColor; // Tint green to show these relate to grid
+            DrawLabelWithShadow($"Grid Spacing: {painter.gridSpacing:F1}");
+            painter.gridSpacing = GUILayout.HorizontalSlider(painter.gridSpacing, 2.0f, 45.0f);
+            GUI.color = textColor;
         }
 
         GUILayout.EndVertical();

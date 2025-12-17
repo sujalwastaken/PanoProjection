@@ -15,9 +15,13 @@ public class PanoramaPaintGPU : MonoBehaviour
     public float zoomSpeed = 2.0f;
     public Color drawColor = Color.red;
     
-    [Header("Perspective Rulers (6-Point)")]
-    public bool useGrid = false;
-    [Tooltip("Angle between grid lines")]
+    [Header("Perspective Ruler (CSP Style)")]
+    public bool useRuler = false;
+    [Tooltip("Rotate the Vanishing Points to match your scene")]
+    public Vector3 gridRotation = Vector3.zero; 
+    [Tooltip("How far you must drag before the ruler locks direction")]
+    public float rulerLockThreshold = 0.005f; 
+    [Tooltip("Angle between grid lines (affects snapping precision)")]
     [Range(2.0f, 45.0f)] public float gridSpacing = 10.0f; 
 
     [Header("Brush Settings")]
@@ -44,12 +48,14 @@ public class PanoramaPaintGPU : MonoBehaviour
     private bool strokeInProgress = false;
 
     private Vector2? lastUvPos = null;
-    
-    // --- PEN TRACKING VARS ---
     private Vector3 lastMousePos; 
     private const float sensitivityMultiplier = 0.1f; 
     private const float TWO_PI = Mathf.PI * 2.0f; 
 
+    // --- RULER STATE ---
+    private Vector3 strokeStartP3D; // The exact 3D point where you clicked
+    private int lockedAxis = -1; // -1: Free, 0: X-Axis, 1: Y-Axis, 2: Z-Axis
+    
     void Start()
     {
         cam = GetComponent<Camera>();
@@ -60,6 +66,18 @@ public class PanoramaPaintGPU : MonoBehaviour
 
         InitializeGPUResources();
     }
+
+    // --- MEMORY CLEANUP ---
+    void OnDestroy() {
+        CleanupList(undoHistory);
+        CleanupList(redoHistory);
+        if (overlayTexture != null) overlayTexture.Release();
+    }
+    void CleanupList(List<RenderTexture> list) {
+        foreach (var rt in list) if (rt != null) { rt.Release(); Destroy(rt); }
+        list.Clear();
+    }
+    // ----------------------
 
     void InitializeGPUResources()
     {
@@ -92,27 +110,10 @@ public class PanoramaPaintGPU : MonoBehaviour
         RenderTexture.active = null;
     }
 
-    // --- MEMORY CLEANUP (CRITICAL FIX) ---
-    void OnDestroy()
-    {
-        CleanupList(undoHistory);
-        CleanupList(redoHistory);
-        if (overlayTexture != null) overlayTexture.Release();
-    }
-
-    void CleanupList(List<RenderTexture> list)
-    {
-        foreach (var rt in list)
-        {
-            if (rt != null) rt.Release();
-        }
-        list.Clear();
-    }
-    // -------------------------------------
-
     void Update()
     {
         bool isCtrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+        bool isShift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
         // --- SHORTCUTS ---
         if (isCtrl && Input.GetKeyDown(KeyCode.S)) { SavePanorama(); return; }
@@ -122,15 +123,37 @@ public class PanoramaPaintGPU : MonoBehaviour
 
         bool isSpace = Input.GetKey(KeyCode.Space);
 
-        // --- CURSOR UPDATE ---
+        // --- CURSOR CALCULATION ---
         Vector2 screenPos = Input.mousePosition;
         Vector2 screenUV = new Vector2(screenPos.x / Screen.width, screenPos.y / Screen.height);
-        Vector2 currentCursorUV = ScreenPointToPanoUV(screenUV);
+        
+        // 1. Get Raw 3D Point on Sphere (Before UV conversion)
+        Vector3 currentP3D = ScreenPointToSphereVector(screenUV);
+        
+        // 2. Apply Ruler Logic if Painting
+        bool isPainting = Input.GetMouseButton(0) && !isSpace && !isCtrl;
+        
+        // --- CSP-STYLE RULER LOGIC ---
+        // Snap if grid is toggled ON, OR if Shift is held down
+        bool shouldSnap = useRuler || isShift; 
 
-        if (useGrid && !isSpace) 
+        if (shouldSnap && isPainting)
         {
-            currentCursorUV = SnapToPerspectiveLines(currentCursorUV);
+            // If just started clicking, record start point and reset lock
+            if (Input.GetMouseButtonDown(0))
+            {
+                strokeStartP3D = currentP3D;
+                lockedAxis = -1;
+            }
+
+            // Apply Directional Constraint
+            currentP3D = ApplyPerspectiveRuler(currentP3D);
         }
+
+        // 3. Convert Final 3D Point to UV for Painting
+        Vector2 currentCursorUV = SphereVectorToUV(currentP3D);
+
+        // --------------------------------
 
         float currentSize = isEraser ? eraserSize : brushSize;
         Color cursorCol = isEraser ? Color.black : new Color(drawColor.r, drawColor.g, drawColor.b, 1.0f);
@@ -144,53 +167,38 @@ public class PanoramaPaintGPU : MonoBehaviour
         if (GUIUtility.hotControl != 0) return; 
 
         // --- INPUT TRACKING ---
-        if (Input.GetMouseButtonDown(0)) 
-        {
-            lastMousePos = Input.mousePosition;
-        }
+        if (Input.GetMouseButtonDown(0)) lastMousePos = Input.mousePosition;
 
         bool isClick = Input.GetMouseButton(0);
-        bool isShift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
         if (isSpace && isClick)
         {
+            // Navigation Logic (Unchanged)
             Vector3 currentPos = Input.mousePosition;
             Vector3 delta = currentPos - lastMousePos;
-
             float t = projectionEffect.perspective / 100.0f;
             float damping = Mathf.Lerp(0.1f, 1.0f, t);
-
             float dx = delta.x * sensitivityMultiplier;
             float dy = delta.y * sensitivityMultiplier;
 
-            if (isCtrl) // Zoom
-            {
+            if (isCtrl) {
                 float proportionalStep = projectionEffect.perspective * 0.05f; 
                 float zoomChange = dx * zoomSpeed * proportionalStep;
                 projectionEffect.perspective = Mathf.Clamp(projectionEffect.perspective - zoomChange, 1f, 100f);
             }
-            else if (isShift) // Roll
-            {
-                transform.Rotate(Vector3.forward, -dx * rotateSpeed * damping, Space.Self);
-            }
-            else // Orbit
-            {
+            else if (isShift) transform.Rotate(Vector3.forward, -dx * rotateSpeed * damping, Space.Self);
+            else {
                 transform.Rotate(Vector3.up, -dx * rotateSpeed * damping, Space.World);
                 transform.Rotate(Vector3.right, -dy * rotateSpeed * damping, Space.Self);
             }
-            
             lastUvPos = null; 
         }
-        else if (isClick && !isSpace && !isCtrl) // Paint
+        else if (isPainting) // Paint
         {
-            if (!strokeInProgress) 
-            { 
+            if (!strokeInProgress) { 
                 SaveUndoState(); 
                 strokeInProgress = true; 
-                
-                // --- FIX: DESTROY REDO TEXTURES BEFORE CLEARING LIST ---
                 CleanupList(redoHistory); 
-                // ------------------------------------------------------
             }
             if (lastUvPos == null) lastUvPos = currentCursorUV;
             
@@ -203,74 +211,151 @@ public class PanoramaPaintGPU : MonoBehaviour
             strokeInProgress = false;
         }
 
-        if (isClick)
-        {
-            lastMousePos = Input.mousePosition;
-        }
+        if (isClick) lastMousePos = Input.mousePosition;
     }
 
-    Vector2 SnapToPerspectiveLines(Vector2 uv)
+    // ===================================================================================
+    //  CSP-STYLE PERSPECTIVE RULER LOGIC
+    // ===================================================================================
+    Vector3 ApplyPerspectiveRuler(Vector3 currentP)
     {
-        float lon = (uv.x - 0.5f) * TWO_PI;
-        float lat = (0.5f - uv.y) * Mathf.PI;
-        float cosLat = Mathf.Cos(lat);
-        Vector3 P = new Vector3(
-            cosLat * Mathf.Sin(lon),
-            Mathf.Sin(lat),
-            cosLat * Mathf.Cos(lon)
-        );
+        // Grid Orientation
+        Quaternion gridRot = Quaternion.Euler(gridRotation);
+        
+        // Define Vanishing Point Directions (Axes)
+        Vector3 vpX = gridRot * Vector3.right;   // X Axis
+        Vector3 vpY = gridRot * Vector3.up;      // Y Axis
+        Vector3 vpZ = gridRot * Vector3.forward; // Z Axis
 
-        float radStep = gridSpacing * Mathf.Deg2Rad;
+        // If we haven't locked an axis yet, try to detect one
+        if (lockedAxis == -1)
+        {
+            float dist = Vector3.Distance(currentP, strokeStartP3D);
+            if (dist > rulerLockThreshold)
+            {
+                // Calculate which VP axis matches the stroke direction best
+                Vector3 strokeDir = (currentP - strokeStartP3D).normalized;
+                
+                // Determine tangents of Great Circles connecting StartPoint to VPs
+                // Tangent = Normal x StartPoint
+                // Normal = StartPoint x VP
+                
+                Vector3 normX = Vector3.Cross(strokeStartP3D, vpX).normalized;
+                Vector3 tanX = Vector3.Cross(normX, strokeStartP3D).normalized;
 
-        float angY = Mathf.Atan2(P.x, P.z);
-        float snapAngY = Mathf.Round(angY / radStep) * radStep;
-        Vector3 normY = new Vector3(Mathf.Cos(snapAngY), 0, -Mathf.Sin(snapAngY));
-        Vector3 snapP_Y = Vector3.ProjectOnPlane(P, normY).normalized;
-        float distY = Vector3.Distance(P, snapP_Y);
+                Vector3 normY = Vector3.Cross(strokeStartP3D, vpY).normalized;
+                Vector3 tanY = Vector3.Cross(normY, strokeStartP3D).normalized;
 
-        float angX = Mathf.Atan2(P.y, P.z);
-        float snapAngX = Mathf.Round(angX / radStep) * radStep;
-        Vector3 normX = new Vector3(0, Mathf.Cos(snapAngX), -Mathf.Sin(snapAngX));
-        Vector3 snapP_X = Vector3.ProjectOnPlane(P, normX).normalized;
-        float distX = Vector3.Distance(P, snapP_X);
+                Vector3 normZ = Vector3.Cross(strokeStartP3D, vpZ).normalized;
+                Vector3 tanZ = Vector3.Cross(normZ, strokeStartP3D).normalized;
 
-        float angZ = Mathf.Atan2(P.y, P.x);
-        float snapAngZ = Mathf.Round(angZ / radStep) * radStep;
-        Vector3 normZ = new Vector3(-Mathf.Sin(snapAngZ), Mathf.Cos(snapAngZ), 0);
-        Vector3 snapP_Z = Vector3.ProjectOnPlane(P, normZ).normalized;
-        float distZ = Vector3.Distance(P, snapP_Z);
+                // Compare alignment (Dot Product)
+                float dotX = Mathf.Abs(Vector3.Dot(strokeDir, tanX));
+                float dotY = Mathf.Abs(Vector3.Dot(strokeDir, tanY));
+                float dotZ = Mathf.Abs(Vector3.Dot(strokeDir, tanZ));
 
-        Vector3 bestSnap = snapP_Y;
-        if (distX < distY && distX < distZ) bestSnap = snapP_X;
-        else if (distZ < distY && distZ < distX) bestSnap = snapP_Z;
+                // Lock the best fitting axis
+                if (dotX > dotY && dotX > dotZ) lockedAxis = 0;
+                else if (dotY > dotX && dotY > dotZ) lockedAxis = 1;
+                else lockedAxis = 2;
+            }
+            else
+            {
+                // Hasn't moved far enough to lock, return raw position (freehand feel at start)
+                return currentP;
+            }
+        }
 
-        float newLon = Mathf.Atan2(bestSnap.x, bestSnap.z);
-        float newLat = Mathf.Asin(Mathf.Clamp(bestSnap.y, -1f, 1f));
+        // Apply Constraint based on Locked Axis
+        Vector3 targetVP = Vector3.zero;
+        if (lockedAxis == 0) targetVP = vpX;
+        if (lockedAxis == 1) targetVP = vpY;
+        if (lockedAxis == 2) targetVP = vpZ;
 
-        Vector2 snappedUV;
-        snappedUV.x = Mathf.Repeat((newLon / TWO_PI) + 0.5f, 1.0f);
-        snappedUV.y = Mathf.Clamp01(0.5f - (newLat / Mathf.PI));
+        // 1. Calculate the Plane defined by: StartPoint, VP, and Origin(0,0,0)
+        // Normal of this plane is perpendicular to both StartPoint and VP
+        Vector3 planeNormal = Vector3.Cross(strokeStartP3D, targetVP).normalized;
 
-        return snappedUV;
+        // 2. Project current cursor position onto this plane
+        // This effectively "flattens" your movement onto the Great Circle
+        Vector3 projectedP = Vector3.ProjectOnPlane(currentP, planeNormal);
+
+        // 3. Normalize to put it back on the sphere surface
+        return projectedP.normalized;
     }
+
+
+    // --- HELPERS FOR 3D VECTOR MATH ---
+    Vector3 ScreenPointToSphereVector(Vector2 screenUV)
+    {
+        // Inverse of standard projection logic
+        Vector2 coord = (screenUV - new Vector2(0.5f, 0.5f)) * 2.0f; 
+        coord.x *= cam.aspect;
+        float r = coord.magnitude; 
+        Vector3 rayDir = new Vector3(0, 0, 1);
+        
+        if (r > 0.0001f) {
+            float fisheyeAmt = projectionEffect.fisheyePerspective / 100.0f;
+            float t = (projectionEffect.perspective - 1.0f) / 99.0f;
+            float minScale = Mathf.Tan(projectionEffect.minFov * 0.5f * Mathf.Deg2Rad);
+            float maxScale = Mathf.Tan(projectionEffect.maxFov * 0.5f * Mathf.Deg2Rad);
+            float perspScale = Mathf.Lerp(minScale, maxScale, t);
+            float scaledR = r * perspScale;
+            float theta = Mathf.Lerp(Mathf.Atan(scaledR), 2.0f * Mathf.Atan(scaledR), fisheyeAmt * fisheyeAmt * (3.0f - 2.0f * fisheyeAmt));
+            
+            float sinTheta = Mathf.Sin(theta); 
+            float cosTheta = Mathf.Cos(theta);
+            Vector2 dir2D = coord / r; 
+            rayDir.x = dir2D.x * sinTheta; 
+            rayDir.y = -dir2D.y * sinTheta; 
+            rayDir.z = cosTheta;
+        }
+        
+        // Transform by camera rotation to get World Direction
+        return (cam.transform.rotation * rayDir).normalized;
+    }
+
+    Vector2 SphereVectorToUV(Vector3 p)
+    {
+        float lon = Mathf.Atan2(p.x, p.z);
+        float lat = Mathf.Asin(Mathf.Clamp(p.y, -1.0f, 1.0f));
+        Vector2 uv;
+        uv.x = Mathf.Repeat(lon / TWO_PI + 0.5f, 1.0f);
+        uv.y = Mathf.Clamp01(0.5f - lat / Mathf.PI);
+        return uv;
+    }
+    // ----------------------------------
 
     void HandleToolInput()
     {
         if (Input.GetKeyDown(KeyCode.B) || Input.GetKeyDown(KeyCode.P) || Input.GetKeyDown(KeyCode.Q)) isEraser = false;
         if (Input.GetKeyDown(KeyCode.E)) isEraser = true;
-        if (Input.GetKeyDown(KeyCode.G)) useGrid = !useGrid;
+        
+        // --- GRID CONTROLS ---
+        if (Input.GetKeyDown(KeyCode.G)) {
+            if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
+            {
+                gridRotation = cam.transform.eulerAngles; // Align Ruler to View
+            }
+            else 
+            {
+                useRuler = !useRuler; // Toggle Ruler
+            }
+        }
 
         if (Input.GetKeyDown(KeyCode.Z) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) {
             if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) PerformRedo(); else PerformUndo();
         }
     }
 
-    public void SavePanorama()
-    {
+    // --- SAVE / LOAD / UNDO / PAINT
+    public void SavePanorama() {
         Texture source = projectionEffect.panoramaTexture;
         if (source == null || overlayTexture == null) return;
         string timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
         string defaultName = $"Panorama_{timestamp}.jpg";
+        
+        // Call class wrapper directly (No using statement)
         string path = SimpleFileBrowser.SaveFile("Save Panorama", defaultName, "jpg");
 
         if (string.IsNullOrEmpty(path)) return;
@@ -296,9 +381,8 @@ public class PanoramaPaintGPU : MonoBehaviour
         UnityEditor.AssetDatabase.Refresh(); 
 #endif
     }
-
-    public void LoadPanorama()
-    {
+    public void LoadPanorama() {
+        // Call class wrapper directly (No using statement)
         string path = SimpleFileBrowser.OpenFile("Load Panorama");
         if (string.IsNullOrEmpty(path)) return;
 
@@ -320,7 +404,7 @@ public class PanoramaPaintGPU : MonoBehaviour
             {
                 projectionEffect.panoramaTexture = newPano;
                 InitializeGPUResources();
-                CleanupList(undoHistory); // Clean memory on load
+                CleanupList(undoHistory);
                 CleanupList(redoHistory);
             }
 
@@ -335,61 +419,37 @@ public class PanoramaPaintGPU : MonoBehaviour
             isEraser = keptTool;
         }
     }
-
     void SaveUndoState() {
         RenderTexture snapshot = new RenderTexture(overlayTexture.descriptor);
         snapshot.Create(); Graphics.CopyTexture(overlayTexture, snapshot);
         undoHistory.Add(snapshot);
-        if (undoHistory.Count > maxUndoSteps) { 
-            RenderTexture old = undoHistory[0]; 
-            undoHistory.RemoveAt(0); 
-            old.Release(); // Properly release memory
-            Destroy(old); 
-        }
+        if (undoHistory.Count > maxUndoSteps) { RenderTexture old = undoHistory[0]; undoHistory.RemoveAt(0); old.Release(); Destroy(old); }
     }
-    
     void PerformUndo() {
         if (undoHistory.Count == 0) return;
         RenderTexture redoSnapshot = new RenderTexture(overlayTexture.descriptor);
         Graphics.CopyTexture(overlayTexture, redoSnapshot); redoHistory.Add(redoSnapshot);
         RenderTexture lastState = undoHistory[undoHistory.Count - 1];
         Graphics.CopyTexture(lastState, overlayTexture);
-        undoHistory.RemoveAt(undoHistory.Count - 1); 
-        lastState.Release(); 
-        Destroy(lastState);
+        undoHistory.RemoveAt(undoHistory.Count - 1); lastState.Release(); Destroy(lastState);
     }
-    
     void PerformRedo() {
         if (redoHistory.Count == 0) return;
         RenderTexture undoSnapshot = new RenderTexture(overlayTexture.descriptor);
         Graphics.CopyTexture(overlayTexture, undoSnapshot); undoHistory.Add(undoSnapshot);
         RenderTexture lastState = redoHistory[redoHistory.Count - 1];
         Graphics.CopyTexture(lastState, overlayTexture);
-        redoHistory.RemoveAt(redoHistory.Count - 1); 
-        lastState.Release();
-        Destroy(lastState);
+        redoHistory.RemoveAt(redoHistory.Count - 1); lastState.Release(); Destroy(lastState);
     }
-
-    void PaintStroke(Vector2 startUV, Vector2 endUV, bool eraseMode)
-    {
+    void PaintStroke(Vector2 startUV, Vector2 endUV, bool eraseMode) {
         if (eraseMode && eraserMaterial == null) return;
         if (!eraseMode && brushMaterial == null) return;
 
         RenderTexture.active = overlayTexture;
         GL.PushMatrix(); GL.LoadPixelMatrix(0, 1, 0, 1); 
 
-        if (eraseMode) 
-        { 
-            eraserMaterial.SetPass(0); 
-            GL.Begin(GL.QUADS); 
-            GL.Color(new Color(0, 0, 0, 1)); 
-        }
-        else 
-        { 
-            brushMaterial.SetPass(0); 
-            GL.Begin(GL.QUADS); 
-            GL.Color(drawColor); 
-        }
+        if (eraseMode) { eraserMaterial.SetPass(0); GL.Begin(GL.QUADS); GL.Color(new Color(0, 0, 0, 1)); }
+        else { brushMaterial.SetPass(0); GL.Begin(GL.QUADS); GL.Color(drawColor); }
 
         float dx = endUV.x - startUV.x;
         if (dx > 0.5f) endUV.x -= 1.0f; else if (dx < -0.5f) endUV.x += 1.0f;
@@ -412,7 +472,6 @@ public class PanoramaPaintGPU : MonoBehaviour
         }
         GL.End(); GL.PopMatrix(); RenderTexture.active = null;
     }
-
     void DrawBrushQuad(Vector2 center, float sizeX, float sizeY) {
         float halfX = sizeX * 0.5f; float halfY = sizeY * 0.5f;
         GL.TexCoord2(0, 0); GL.Vertex3(center.x - halfX, center.y - halfY, 0);
@@ -420,7 +479,6 @@ public class PanoramaPaintGPU : MonoBehaviour
         GL.TexCoord2(1, 1); GL.Vertex3(center.x + halfX, center.y + halfY, 0);
         GL.TexCoord2(1, 0); GL.Vertex3(center.x + halfX, center.y - halfY, 0);
     }
-
     void GenerateBrushTexture() {
         int res = 128; brushTexture = new Texture2D(res, res, TextureFormat.ARGB32, false);
         Color[] colors = new Color[res * res]; Vector2 center = new Vector2(res*0.5f, res*0.5f); float maxRadius = res*0.5f;
@@ -430,25 +488,5 @@ public class PanoramaPaintGPU : MonoBehaviour
                 colors[y * res + x] = new Color(1, 1, 1, alpha);
         }}
         brushTexture.SetPixels(colors); brushTexture.Apply();
-    }
-
-    Vector2 ScreenPointToPanoUV(Vector2 screenUV) {
-        Vector2 coord = (screenUV - new Vector2(0.5f, 0.5f)) * 2.0f; coord.x *= cam.aspect;
-        float r = coord.magnitude; Vector3 rayDir = new Vector3(0, 0, 1);
-        if (r > 0.0001f) {
-            float fisheyeAmt = projectionEffect.fisheyePerspective / 100.0f;
-            float t = (projectionEffect.perspective - 1.0f) / 99.0f;
-            float minScale = Mathf.Tan(projectionEffect.minFov * 0.5f * Mathf.Deg2Rad);
-            float maxScale = Mathf.Tan(projectionEffect.maxFov * 0.5f * Mathf.Deg2Rad);
-            float perspScale = Mathf.Lerp(minScale, maxScale, t);
-            float scaledR = r * perspScale;
-            float theta = Mathf.Lerp(Mathf.Atan(scaledR), 2.0f * Mathf.Atan(scaledR), fisheyeAmt * fisheyeAmt * (3.0f - 2.0f * fisheyeAmt));
-            float sinTheta = Mathf.Sin(theta); float cosTheta = Mathf.Cos(theta);
-            Vector2 dir2D = coord / r; rayDir.x = dir2D.x * sinTheta; rayDir.y = -dir2D.y * sinTheta; rayDir.z = cosTheta;
-        }
-        rayDir = cam.transform.rotation * rayDir; rayDir.Normalize();
-        float lon = Mathf.Atan2(rayDir.x, rayDir.z); float lat = Mathf.Asin(Mathf.Clamp(rayDir.y, -1.0f, 1.0f));
-        Vector2 panoUV; panoUV.x = Mathf.Repeat(lon / TWO_PI + 0.5f, 1.0f); panoUV.y = Mathf.Clamp01(0.5f - lat / Mathf.PI);
-        return panoUV;
     }
 }

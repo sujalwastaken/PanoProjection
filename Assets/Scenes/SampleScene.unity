@@ -263,7 +263,9 @@ MonoBehaviour:
   rotateSpeed: 4
   zoomSpeed: 2
   drawColor: {r: 1, g: 0, b: 0, a: 1}
-  useGrid: 0
+  useRuler: 0
+  gridRotation: {x: 0, y: 0, z: 0}
+  rulerLockThreshold: 0.005
   gridSpacing: 10
   brushSize: 5
   eraserSize: 10
@@ -279,7 +281,7 @@ Animator:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 963194225}
-  m_Enabled: 1
+  m_Enabled: 0
   m_Avatar: {fileID: 0}
   m_Controller: {fileID: 9100000, guid: ff1a9c865b0fbb848ba22612d22bd884, type: 2}
   m_CullingMode: 0
