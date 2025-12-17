@@ -26,7 +26,7 @@ public class PanoramaUI : MonoBehaviour
     // Dimensions
     private float uiWidth = 450f;
     private float baseHeight = 510f; 
-    private float colorPickerHeight = 160f; // Adjusted for single slider
+    private float colorPickerHeight = 120f; // Adjusted for single slider
     private float gridControlsHeight = 160f; 
 
     void Start()
@@ -51,7 +51,7 @@ public class PanoramaUI : MonoBehaviour
     void Update()
     {
         if (Input.GetKeyDown(KeyCode.W)) showUI = !showUI;
-
+                                
         deltaTime += (Time.unscaledDeltaTime - deltaTime) * 0.1f;
         fps = 1.0f / deltaTime;
 
