@@ -15,19 +15,28 @@ public class PanoramaUI : MonoBehaviour
     private Camera cam;
     private float fps;
     private float deltaTime = 0.0f;
+    
+    // For Color Preview
+    private Texture2D colorSwatch;
 
     private bool showUI = true;
 
     // Dimensions
     private float uiWidth = 450f;
-    private float baseHeight = 510f; // Height for standard tools
-    private float gridControlsHeight = 160f; // Extra height for grid sliders
+    private float baseHeight = 510f; 
+    private float colorPickerHeight = 200f; // Height needed for color controls
+    private float gridControlsHeight = 160f; 
 
     void Start()
     {
         projection = GetComponent<PanoramaProjectionEffect>();
         painter = GetComponent<PanoramaPaintGPU>();
         cam = GetComponent<Camera>();
+        
+        // Create a simple white texture for drawing the color preview box
+        colorSwatch = new Texture2D(1, 1);
+        colorSwatch.SetPixel(0, 0, Color.white);
+        colorSwatch.Apply();
     }
 
     void Update()
@@ -60,9 +69,12 @@ public class PanoramaUI : MonoBehaviour
         }
 
         // --- DYNAMIC HEIGHT CALCULATION ---
-        // Check if we need to show the extra grid controls
         bool showGridControls = painter.showGrid || painter.enableSnapping;
-        float currentHeight = showGridControls ? (baseHeight + gridControlsHeight) : baseHeight;
+        bool showColorPicker = !painter.isEraser; // Only show color picker for Brush
+
+        float currentHeight = baseHeight;
+        if (showGridControls) currentHeight += gridControlsHeight;
+        if (showColorPicker) currentHeight += colorPickerHeight;
         
         float padding = 10;
 
@@ -83,23 +95,14 @@ public class PanoramaUI : MonoBehaviour
 
         // --- Tools Status ---
         GUILayout.BeginHorizontal();
-        
-        // Brush
         GUI.color = (!painter.isEraser) ? activeToolColor : textColor;
-        GUILayout.Label("[Q] Brush");
-
-        // Eraser
+        GUILayout.Label("Brush: [Q]");
         GUI.color = (painter.isEraser) ? activeToolColor : textColor;
-        GUILayout.Label("[E] Eraser");
-
-        // Grid Vis
+        GUILayout.Label("Eraser: [E]");
         GUI.color = (painter.showGrid) ? activeToolColor : textColor;
-        GUILayout.Label("[G] Grid");
-
-        // Grid Snap
+        GUILayout.Label("Grid: [G]");
         GUI.color = (painter.enableSnapping) ? activeToolColor : textColor;
-        GUILayout.Label("[S] Snap");
-
+        GUILayout.Label("Snap: [S]");
         GUI.color = textColor; 
         GUILayout.EndHorizontal();
 
@@ -131,15 +134,67 @@ public class PanoramaUI : MonoBehaviour
         }
         else
         {
+            // --- BRUSH CONTROLS ---
             DrawLabelWithShadow($"Brush Size: {painter.brushSize:F0}");
             painter.brushSize = GUILayout.HorizontalSlider(painter.brushSize, 1f, 200f);
+            
+            GUILayout.Space(10);
+            
+            // --- COLOR PICKER ---
+            GUILayout.BeginVertical(GUI.skin.box);
+            DrawLabelWithShadow("Brush Color");
+            
+            // --- FIX START: Use GUI.DrawTexture instead of Box ---
+            GUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            
+            // 1. Reserve the rectangle space
+            Rect cRect = GUILayoutUtility.GetRect(uiWidth - 40, 20);
+            
+            // 2. Draw the texture stretched to fill that space
+            Color oldC = GUI.color;
+            GUI.color = painter.drawColor;
+            GUI.DrawTexture(cRect, colorSwatch, ScaleMode.StretchToFill);
+            GUI.color = oldC;
+            
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            // --- FIX END ---
+
+            // RGB Sliders
+            GUILayout.Space(5);
+            Color c = painter.drawColor;
+            
+            GUILayout.BeginHorizontal();
+            DrawLabelWithShadow("R", 20); c.r = GUILayout.HorizontalSlider(c.r, 0f, 1f);
+            GUILayout.EndHorizontal();
+            
+            GUILayout.BeginHorizontal();
+            DrawLabelWithShadow("G", 20); c.g = GUILayout.HorizontalSlider(c.g, 0f, 1f);
+            GUILayout.EndHorizontal();
+            
+            GUILayout.BeginHorizontal();
+            DrawLabelWithShadow("B", 20); c.b = GUILayout.HorizontalSlider(c.b, 0f, 1f);
+            GUILayout.EndHorizontal();
+
+            painter.drawColor = c;
+
+            // Quick Presets
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Red")) painter.drawColor = Color.red;
+            if (GUILayout.Button("Green")) painter.drawColor = Color.green;
+            if (GUILayout.Button("Blue")) painter.drawColor = Color.blue;
+            if (GUILayout.Button("Black")) painter.drawColor = Color.black;
+            GUILayout.EndHorizontal();
+            
+            GUILayout.EndVertical();
         }
 
         // --- Grid Controls (Conditional) ---
         if (showGridControls)
         {
             GUILayout.Space(15);
-            GUI.color = activeToolColor; // Tint section Green
+            GUI.color = activeToolColor; 
             
             DrawLabelWithShadow($"Grid Spacing: {painter.gridSpacing:F1}");
             painter.gridSpacing = GUILayout.HorizontalSlider(painter.gridSpacing, 2.0f, 45.0f);
@@ -150,16 +205,22 @@ public class PanoramaUI : MonoBehaviour
             DrawLabelWithShadow($"Grid Opacity: {painter.gridOpacity:F2}");
             painter.gridOpacity = GUILayout.HorizontalSlider(painter.gridOpacity, 0.0f, 1.0f);
 
-            GUI.color = textColor; // Reset
+            GUI.color = textColor; 
         }
 
         GUILayout.EndVertical();
         GUILayout.EndArea();
     }
 
-    void DrawLabelWithShadow(string text)
+    void DrawLabelWithShadow(string text, float width = -1)
     {
-        var rect = GUILayoutUtility.GetRect(new GUIContent(text), GUI.skin.label);
+        GUIContent content = new GUIContent(text);
+        Rect rect;
+        if(width > 0) 
+            rect = GUILayoutUtility.GetRect(content, GUI.skin.label, GUILayout.Width(width));
+        else 
+            rect = GUILayoutUtility.GetRect(content, GUI.skin.label);
+
         Color old = GUI.color;
         GUI.color = Color.black;
         GUI.Label(new Rect(rect.x + 1, rect.y + 1, rect.width, rect.height), text);
