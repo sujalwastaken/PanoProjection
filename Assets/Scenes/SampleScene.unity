@@ -222,8 +222,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   projectionShader: {fileID: 4800000, guid: 1246e4529e8ac824e9e1dd462f17c92d, type: 3}
-  panoramaTexture: {fileID: 2800000, guid: a241ff02a7184994f952346e6b5904a4, type: 3}
-  overlayTexture: {fileID: 2800000, guid: a241ff02a7184994f952346e6b5904a4, type: 3}
+  panoramaTexture: {fileID: 2800000, guid: 01013a00b87bbbd4ba10cf30d9f44eaa, type: 3}
+  overlayTexture: {fileID: 2800000, guid: 01013a00b87bbbd4ba10cf30d9f44eaa, type: 3}
   perspective: 17.7
   fisheyePerspective: 0
   minFov: 6.5
@@ -260,15 +260,22 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   brushShader: {fileID: 10753, guid: 0000000000000000f000000000000000, type: 0}
   eraserShader: {fileID: 4800000, guid: 571d550733ef3d549b26e828a9958752, type: 3}
+  gridCompositeShader: {fileID: 4800000, guid: b34466725eddab543a90441558325766, type: 3}
   rotateSpeed: 4
   zoomSpeed: 2
   drawColor: {r: 1, g: 0, b: 0, a: 1}
-  useRuler: 0
+  enableSnapping: 0
+  showGrid: 1
   gridRotation: {x: 0, y: 0, z: 0}
+  gridSpacing: 5
+  gridThickness: 1.25
+  gridOpacity: 0.25
+  gridColorX: {r: 1, g: 0, b: 0, a: 1}
+  gridColorY: {r: 0, g: 1, b: 0, a: 1}
+  gridColorZ: {r: 0, g: 0, b: 1, a: 1}
   rulerLockThreshold: 0.005
-  gridSpacing: 10
   brushSize: 5
-  eraserSize: 10
+  eraserSize: 20
   brushSpacing: 0.05
   hardness: 1
   maxUndoSteps: 20

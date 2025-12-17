@@ -8,7 +8,7 @@ public class PanoramaUI : MonoBehaviour
     public float scrollSensitivity = 5.0f;
     public Color uiBackgroundColor = new Color(0, 0, 0, 0.5f);
     public Color textColor = Color.white;
-    public Color activeToolColor = Color.green; // This makes the text Green when active
+    public Color activeToolColor = Color.green; 
 
     private PanoramaProjectionEffect projection;
     private PanoramaPaintGPU painter;
@@ -16,8 +16,12 @@ public class PanoramaUI : MonoBehaviour
     private float fps;
     private float deltaTime = 0.0f;
 
-    // Toggle State
     private bool showUI = true;
+
+    // Dimensions
+    private float uiWidth = 450f;
+    private float baseHeight = 510f; // Height for standard tools
+    private float gridControlsHeight = 160f; // Extra height for grid sliders
 
     void Start()
     {
@@ -28,11 +32,7 @@ public class PanoramaUI : MonoBehaviour
 
     void Update()
     {
-        // --- Toggle UI Hotkey ---
-        if (Input.GetKeyDown(KeyCode.W))
-        {
-            showUI = !showUI;
-        }
+        if (Input.GetKeyDown(KeyCode.W)) showUI = !showUI;
 
         deltaTime += (Time.unscaledDeltaTime - deltaTime) * 0.1f;
         fps = 1.0f / deltaTime;
@@ -51,28 +51,27 @@ public class PanoramaUI : MonoBehaviour
         GUI.contentColor = textColor;
         GUI.skin.label.fontSize = 21;
 
-        // --- HIDDEN MODE ---
         if (!showUI)
         {
-            // Just show "W" in the corner
             GUILayout.BeginArea(new Rect(10, 10, 50, 50));
             DrawLabelWithShadow("[W]");
             GUILayout.EndArea();
-            return; // Stop drawing the rest
+            return; 
         }
 
-        // --- FULL UI MODE ---
-        float width = 450; // Widened slightly for grid text
-        float height = 650; // Heightened for new controls
+        // --- DYNAMIC HEIGHT CALCULATION ---
+        // Check if we need to show the extra grid controls
+        bool showGridControls = painter.showGrid || painter.enableSnapping;
+        float currentHeight = showGridControls ? (baseHeight + gridControlsHeight) : baseHeight;
+        
         float padding = 10;
 
-        GUILayout.BeginArea(new Rect(padding, padding, width, height), GUI.skin.box);
+        GUILayout.BeginArea(new Rect(padding, padding, uiWidth, currentHeight), GUI.skin.box);
         GUILayout.BeginVertical();
 
         // --- Info ---
         DrawLabelWithShadow($"FPS: {Mathf.CeilToInt(fps)}");
 
-        // --- Camera Rotation ---
         Vector3 rot = cam.transform.eulerAngles;
         float x = (rot.x > 180) ? rot.x - 360 : rot.x;
         float y = rot.y;
@@ -82,7 +81,7 @@ public class PanoramaUI : MonoBehaviour
         DrawLabelWithShadow($"H-FOV: {projection.calculatedHorizontalFOV:F1}  V-FOV: {projection.calculatedVerticalFOV:F1}");
         GUILayout.Space(10);
 
-        // --- Tools Status (Brush / Eraser / Grid) ---
+        // --- Tools Status ---
         GUILayout.BeginHorizontal();
         
         // Brush
@@ -93,26 +92,26 @@ public class PanoramaUI : MonoBehaviour
         GUI.color = (painter.isEraser) ? activeToolColor : textColor;
         GUILayout.Label("[E] Eraser");
 
-        // Grid (New)
-        GUI.color = (painter.useRuler) ? activeToolColor : textColor;
-        GUILayout.Label("[G] Grid Snap");
+        // Grid Vis
+        GUI.color = (painter.showGrid) ? activeToolColor : textColor;
+        GUILayout.Label("[G] Grid");
 
-        GUI.color = textColor; // Reset color
+        // Grid Snap
+        GUI.color = (painter.enableSnapping) ? activeToolColor : textColor;
+        GUILayout.Label("[S] Snap");
+
+        GUI.color = textColor; 
         GUILayout.EndHorizontal();
 
         GUILayout.Space(10);
         
         // --- Instructions ---
         DrawLabelWithShadow("Hide Window: [W]"); 
-        DrawLabelWithShadow("Undo: Ctrl+Z");
-        DrawLabelWithShadow("Redo: Ctrl+Shift+Z");
-        DrawLabelWithShadow("Save: Ctrl+S");
-        DrawLabelWithShadow("Load: Ctrl+D");
-        
+        DrawLabelWithShadow("Undo: [Ctrl+Z]  |  Redo: [Ctrl+Shift+Z]");
+        DrawLabelWithShadow("Save: [Ctrl+S]  |  Load: [Ctrl+D]");
         GUILayout.Space(5);
-        // New Grid Instructions
         DrawLabelWithShadow("Align Grid to View: [Shift+G]");
-        DrawLabelWithShadow("Grid Snap: Hold [Shift]");
+        DrawLabelWithShadow("Temp Snap: Hold [Shift]"); 
 
         GUILayout.Space(15);
         
@@ -136,14 +135,22 @@ public class PanoramaUI : MonoBehaviour
             painter.brushSize = GUILayout.HorizontalSlider(painter.brushSize, 1f, 200f);
         }
 
-        // --- Grid Controls ---
-        if (painter.useRuler)
+        // --- Grid Controls (Conditional) ---
+        if (showGridControls)
         {
-            GUILayout.Space(10);
-            GUI.color = activeToolColor; // Tint green to show these relate to grid
+            GUILayout.Space(15);
+            GUI.color = activeToolColor; // Tint section Green
+            
             DrawLabelWithShadow($"Grid Spacing: {painter.gridSpacing:F1}");
             painter.gridSpacing = GUILayout.HorizontalSlider(painter.gridSpacing, 2.0f, 45.0f);
-            GUI.color = textColor;
+
+            DrawLabelWithShadow($"Grid Thickness: {painter.gridThickness:F2}");
+            painter.gridThickness = GUILayout.HorizontalSlider(painter.gridThickness, 0.1f, 5.0f); 
+
+            DrawLabelWithShadow($"Grid Opacity: {painter.gridOpacity:F2}");
+            painter.gridOpacity = GUILayout.HorizontalSlider(painter.gridOpacity, 0.0f, 1.0f);
+
+            GUI.color = textColor; // Reset
         }
 
         GUILayout.EndVertical();
