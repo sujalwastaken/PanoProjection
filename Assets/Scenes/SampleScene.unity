@@ -135,6 +135,9 @@ GameObject:
   - component: {fileID: 963194229}
   - component: {fileID: 963194231}
   - component: {fileID: 963194230}
+  - component: {fileID: 963194233}
+  - component: {fileID: 963194235}
+  - component: {fileID: 963194234}
   - component: {fileID: 963194232}
   m_Layer: 0
   m_Name: Main Camera
@@ -222,8 +225,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   projectionShader: {fileID: 4800000, guid: 1246e4529e8ac824e9e1dd462f17c92d, type: 3}
-  panoramaTexture: {fileID: 2800000, guid: 01013a00b87bbbd4ba10cf30d9f44eaa, type: 3}
-  overlayTexture: {fileID: 2800000, guid: 01013a00b87bbbd4ba10cf30d9f44eaa, type: 3}
+  panoramaTexture: {fileID: 2800000, guid: a241ff02a7184994f952346e6b5904a4, type: 3}
+  overlayTexture: {fileID: 2800000, guid: a241ff02a7184994f952346e6b5904a4, type: 3}
   perspective: 17.7
   fisheyePerspective: 0
   minFov: 6.5
@@ -278,8 +281,9 @@ MonoBehaviour:
   eraserSize: 20
   brushSpacing: 0.05
   hardness: 1
-  maxUndoSteps: 20
   isEraser: 0
+  targetTexture: {fileID: 0}
+  allowCameraMovement: 0
 --- !u!95 &963194232
 Animator:
   serializedVersion: 5
@@ -301,6 +305,55 @@ Animator:
   m_AllowConstantClipSamplingOptimization: 1
   m_KeepAnimatorStateOnDisable: 0
   m_WriteDefaultValuesOnDisable: 0
+--- !u!114 &963194233
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 963194225}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 383447038eea63347babcb0a32db50e8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  compositeShader: {fileID: 10753, guid: 0000000000000000f000000000000000, type: 0}
+  reduceResolutionOnPlay: 1
+  exportWidth: 1920
+  exportHeight: 1080
+  currentFrame: 0
+  totalFrames: 24
+  fps: 24
+  isPlaying: 0
+  loop: 1
+  ignoreShortcuts: 0
+  isHoveringGraph: 0
+  isExporting: 0
+  compositionDirty: 1
+--- !u!114 &963194234
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 963194225}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 554a07c67abea3f42b9aafdf7f9c16cc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!114 &963194235
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 963194225}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 78b9eab2c9698a7479f3bad833232698, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1 &1991774024
 GameObject:
   m_ObjectHideFlags: 1

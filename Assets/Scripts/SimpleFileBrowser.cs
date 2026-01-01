@@ -1,6 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
-using System.IO; // Required for Directory.GetCurrentDirectory
+using System.IO;
 using UnityEngine;
 
 public class SimpleFileBrowser
@@ -8,9 +8,7 @@ public class SimpleFileBrowser
     // --- SAVE FILE WRAPPER ---
     public static string SaveFile(string title, string defaultName, string extension)
     {
-        // 1. CACHE CURRENT DIRECTORY
         string originalPath = Directory.GetCurrentDirectory();
-
         try
         {
             OpenFileName ofn = new OpenFileName();
@@ -20,50 +18,65 @@ public class SimpleFileBrowser
             ofn.maxFile = ofn.file.Length;
             ofn.fileTitle = new string(new char[64]);
             ofn.maxFileTitle = ofn.fileTitle.Length;
+
+#if UNITY_EDITOR
             ofn.initialDir = UnityEngine.Application.dataPath;
+#else
+            ofn.initialDir = System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop);
+#endif
             ofn.title = title;
             ofn.defExt = extension;
-            ofn.flags = 0x00080000 | 0x00001000 | 0x00000800 | 0x00000002 | 0x00000008; // OFN_NOCHANGEDIR (0x00000008) is supposed to help, but we force restore anyway
-
+            ofn.flags = 0x00080000 | 0x00001000 | 0x00000800 | 0x00000002 | 0x00000008;
             ofn.file = defaultName;
 
             if (GetSaveFileName(ofn)) return ofn.file;
             return null;
         }
-        finally
-        {
-            // 2. RESTORE DIRECTORY (No matter what happens)
-            Directory.SetCurrentDirectory(originalPath);
-        }
+        finally { Directory.SetCurrentDirectory(originalPath); }
     }
 
-    // --- OPEN FILE WRAPPER ---
+    // --- OPEN FILE (LEGACY OVERLOAD) ---
+    // Fixes CS7036 in PanoramaInteraction.cs
+    // Defaults to Image Files if no extension is provided
     public static string OpenFile(string title)
     {
-        // 1. CACHE CURRENT DIRECTORY
-        string originalPath = Directory.GetCurrentDirectory();
+        return OpenFileWithFilter(title, "Image Files\0*.png;*.jpg;*.jpeg\0All Files\0*.*\0");
+    }
 
+    // --- OPEN FILE (NEW OVERLOAD) ---
+    // Fixes PanoramaProjectIO.cs (allows specific extension like .panon)
+    public static string OpenFile(string title, string extension)
+    {
+        string filter = $"{extension.ToUpper()} Files\0*.{extension}\0All Files\0*.*\0";
+        return OpenFileWithFilter(title, filter);
+    }
+
+    // --- INTERNAL HELPER ---
+    private static string OpenFileWithFilter(string title, string filter)
+    {
+        string originalPath = Directory.GetCurrentDirectory();
         try
         {
             OpenFileName ofn = new OpenFileName();
             ofn.structSize = Marshal.SizeOf(ofn);
-            ofn.filter = "Image Files\0*.png;*.jpg;*.jpeg\0All Files\0*.*\0";
+            ofn.filter = filter;
             ofn.file = new string(new char[256]);
             ofn.maxFile = ofn.file.Length;
             ofn.fileTitle = new string(new char[64]);
             ofn.maxFileTitle = ofn.fileTitle.Length;
+
+#if UNITY_EDITOR
             ofn.initialDir = UnityEngine.Application.dataPath;
+#else
+            ofn.initialDir = System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop);
+#endif
             ofn.title = title;
-            ofn.flags = 0x00080000 | 0x00001000 | 0x00000800 | 0x00000008; // Added OFN_NOCHANGEDIR
+            ofn.flags = 0x00080000 | 0x00001000 | 0x00000800 | 0x00000008;
 
             if (GetOpenFileName(ofn)) return ofn.file;
             return null;
         }
-        finally
-        {
-            // 2. RESTORE DIRECTORY
-            Directory.SetCurrentDirectory(originalPath);
-        }
+        finally { Directory.SetCurrentDirectory(originalPath); }
     }
 
     // --- WINDOWS API ---
