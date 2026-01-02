@@ -699,6 +699,22 @@ public class PanoramaStudioUI : MonoBehaviour
             // Controls
             if (GUILayout.Button(layerManager.isPlaying ? "■ STOP" : "▶ PLAY", GUILayout.Width(80))) layerManager.isPlaying = !layerManager.isPlaying;
             GUILayout.Space(10);
+
+            if (GUILayout.Button("+ Cell", GUILayout.Width(50))) layerManager.ActionAddCell();
+            if (GUILayout.Button("- Cell", GUILayout.Width(50)))
+            {
+                // Logic to remove the cell assignment at the current frame
+                AnimationLayer animLayer = null;
+                if (layerManager.activeLayer is AnimationLayer al) animLayer = al;
+                else if (layerManager.activeLayer != null && layerManager.activeLayer.parent is AnimationLayer pl) animLayer = pl;
+
+                if (animLayer != null && animLayer.timelineMap.ContainsKey(layerManager.currentFrame))
+                {
+                    animLayer.timelineMap.Remove(layerManager.currentFrame);
+                    layerManager.compositionDirty = true;
+                }
+            }
+            GUILayout.Space(10);
             if (GUILayout.Button("+ Key", GUILayout.Width(50))) layerManager.ActionAddKeyframe();
             if (GUILayout.Button("- Key", GUILayout.Width(50))) layerManager.ActionRemoveKeyframe();
             GUILayout.Space(10);
