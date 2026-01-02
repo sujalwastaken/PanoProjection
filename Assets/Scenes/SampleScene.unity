@@ -267,6 +267,8 @@ MonoBehaviour:
   rotateSpeed: 4
   zoomSpeed: 2
   drawColor: {r: 1, g: 0, b: 0, a: 1}
+  customPenCursor: {fileID: 0}
+  cursorHotspot: {x: 0, y: 0}
   enableSnapping: 0
   showGrid: 1
   gridRotation: {x: 0, y: 0, z: 0}
@@ -277,10 +279,11 @@ MonoBehaviour:
   gridColorY: {r: 0, g: 1, b: 0, a: 1}
   gridColorZ: {r: 0, g: 0, b: 1, a: 1}
   rulerLockThreshold: 0.005
-  brushSize: 5
-  eraserSize: 20
+  brushSize: 10
+  eraserSize: 30
   brushSpacing: 0.05
   hardness: 1
+  useSmartBrush: 0
   isEraser: 0
   targetTexture: {fileID: 0}
   allowCameraMovement: 0

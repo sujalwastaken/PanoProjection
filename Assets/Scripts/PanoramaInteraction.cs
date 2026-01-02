@@ -57,6 +57,10 @@ public class PanoramaPaintGPU : MonoBehaviour
     [Range(0.01f, 0.5f)] public float brushSpacing = 0.05f;
     [Range(0.0f, 1.0f)] public float hardness = 0.8f;
 
+    [Tooltip("Scales brush size with FOV to keep line width consistent on screen.")]
+    public bool useSmartBrush = false; 
+    private const float REFERENCE_FOV = 90.0f; // The baseline FOV
+
     [HideInInspector] public bool isEraser = false;
     private bool wasEraser = false; // To track state changes
 
@@ -220,7 +224,8 @@ public class PanoramaPaintGPU : MonoBehaviour
         {
             float currentSize = isEraser ? eraserSize : brushSize;
             Color cursorCol = isEraser ? Color.black : new Color(drawColor.r, drawColor.g, drawColor.b, 1.0f);
-            float radiusUV = (currentSize / targetTexture.height) * 0.5f;
+            float effectiveSize = GetEffectiveBrushSize(currentSize);
+            float radiusUV = (effectiveSize / targetTexture.height) * 0.5f;
             projectionEffect.UpdateCursor(currentCursorUV, radiusUV, cursorCol);
             
             // Re-enforce hardware cursor in case UI overrode it
@@ -659,7 +664,8 @@ public class PanoramaPaintGPU : MonoBehaviour
         else if (dx < -0.5f) endUV.x += 1.0f;
 
         float currentSize = isEraser ? eraserSize : brushSize;
-        float brushScaleY = currentSize / targetTexture.height;
+        float effectiveSize = GetEffectiveBrushSize(currentSize);
+        float brushScaleY = effectiveSize / targetTexture.height;
         float brushScaleX = brushScaleY * ((float)targetTexture.height / targetTexture.width);
 
         float distance = Vector2.Distance(startUV, endUV);
@@ -708,5 +714,14 @@ public class PanoramaPaintGPU : MonoBehaviour
         }
         brushTexture.SetPixels(colors);
         brushTexture.Apply();
+    }
+    public float GetEffectiveBrushSize(float baseSize)
+    {
+        if (!useSmartBrush || projectionEffect == null) return baseSize;
+
+        // Formula: baseSize * (CurrentVerticalFOV / ReferenceFOV)
+        // Uses calculatedVerticalFOV instead of perspective
+        float currentFOV = projectionEffect.calculatedVerticalFOV; 
+        return baseSize * (currentFOV / REFERENCE_FOV);
     }
 }

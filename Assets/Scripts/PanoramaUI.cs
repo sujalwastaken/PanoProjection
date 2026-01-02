@@ -27,7 +27,7 @@ public class PanoramaUI : MonoBehaviour
     private float uiWidth = 450f;
     private float baseHeight = 510f; 
     private float colorPickerHeight = 120f; // Adjusted for single slider
-    private float gridControlsHeight = 160f; 
+    private float gridControlsHeight = 180f; 
 
     void Start()
     {
@@ -153,7 +153,16 @@ public class PanoramaUI : MonoBehaviour
             DrawLabelWithShadow($"Brush Size: {painter.brushSize:F0}");
             painter.brushSize = GUILayout.HorizontalSlider(painter.brushSize, 1f, 200f);
             
-            GUILayout.Space(10);
+            GUILayout.Space(5); // Add space between slider and toggle
+
+            // Color Logic: Green if ON, normal text color if OFF
+            Color originalColor = GUI.color;
+            if (painter.useSmartBrush) GUI.color = Color.green;
+            
+            painter.useSmartBrush = GUILayout.Toggle(painter.useSmartBrush, " Smart Brush (Scale with FOV)");
+            
+            GUI.color = originalColor; // Reset color
+            GUILayout.Space(5);
             
             // --- COLOR PICKER ---
             GUILayout.BeginVertical(GUI.skin.box);
