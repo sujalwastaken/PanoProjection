@@ -524,7 +524,38 @@ public class PanoramaLayerManager : MonoBehaviour
         float r = camLayer.curveRoll.Evaluate(frame); float z = camLayer.curveZoom.Evaluate(frame); float f = camLayer.curveFisheye.Evaluate(frame);
         cam.transform.localEulerAngles = new Vector3(p, y, r); projector.perspective = z; projector.fisheyePerspective = f; painter.SyncCameraFromTransform();
     }
-    CameraLayer FindCameraLayer() { if (activeLayer is CameraLayer cl) return cl; foreach (var child in root.children) if (child is CameraLayer) return (CameraLayer)child; return null; }
+
+    CameraLayer FindCameraLayer()
+    {
+        // Priority 1: If the user explicitly selected a camera, use it (even if hidden)
+        if (activeLayer is CameraLayer cl) return cl;
+
+        // Priority 2: Find the Highest, Visible camera in the hierarchy
+        // We search recursively starting from the visual top (end of list) downwards.
+        return FindHighestVisibleCameraRecursive(root);
+    }
+
+    CameraLayer FindHighestVisibleCameraRecursive(LayerNode node)
+    {
+        // If it's a group, search its children from Top (Last index) to Bottom (0)
+        if (node is GroupLayer group)
+        {
+            for (int i = group.children.Count - 1; i >= 0; i--)
+            {
+                CameraLayer found = FindHighestVisibleCameraRecursive(group.children[i]);
+                if (found != null) return found;
+            }
+        }
+
+        // Check if this specific node is a Visible Camera
+        if (node is CameraLayer cam && cam.isVisible)
+        {
+            return cam;
+        }
+
+        return null;
+    }
+
     public void StepFrame(int dir)
     {
         int next = currentFrame + dir; if (next >= totalFrames) { if (loop) next = 0; else { next = totalFrames - 1; isPlaying = false; } } else if (next < 0) { if (loop) next = totalFrames - 1; else next = 0; }
