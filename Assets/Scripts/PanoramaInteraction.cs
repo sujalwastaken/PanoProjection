@@ -267,7 +267,6 @@ public class PanoramaPaintGPU : MonoBehaviour
             {
                 camYaw -= dx * rotateSpeed * damping;
                 camPitch -= dy * rotateSpeed * damping;
-                camPitch = Mathf.Clamp(camPitch, -89.5f, 89.5f);
                 ApplyRotation();
             }
             lastUvPos = null;
@@ -577,7 +576,6 @@ public class PanoramaPaintGPU : MonoBehaviour
         camYaw = rot.y;
         camRoll = rot.z;
         if (camPitch > 180) camPitch -= 360;
-        camPitch = Mathf.Clamp(camPitch, -89.5f, 89.5f);
     }
 
     void ApplyRotation()
