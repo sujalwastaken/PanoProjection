@@ -101,6 +101,12 @@ public class PanoramaPaintGPU : MonoBehaviour
     private int lockedAxis = -1; // -1: None, 0-2: Primary, 10-15: Diagonals
     private Vector3 activeSnapNormal = Vector3.zero;
 
+    // Line tool state (Alt key)
+    private bool lineToolActive = false;
+    private Vector2 lineStartUV;
+    private Vector3 lineStartP3D;
+    private RenderTexture linePreviewRT;
+
     void Start()
     {
         cam = GetComponent<Camera>();
@@ -137,6 +143,7 @@ public class PanoramaPaintGPU : MonoBehaviour
     void OnDestroy()
     {
         if (displayTexture != null) displayTexture.Release();
+        if (linePreviewRT != null) linePreviewRT.Release();
         // Reset cursor on exit
         Cursor.SetCursor(null, Vector2.zero, CursorMode.Auto);
     }
@@ -172,6 +179,7 @@ public class PanoramaPaintGPU : MonoBehaviour
     {
         bool isCtrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
         bool isShift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+        bool isAlt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
 
         if (isCtrl && Input.GetKeyDown(KeyCode.S)) { SavePanorama(); return; }
         if (isCtrl && Input.GetKeyDown(KeyCode.D)) { LoadPanorama(); return; }
@@ -214,7 +222,7 @@ public class PanoramaPaintGPU : MonoBehaviour
         // Snapping logic
         bool shouldSnap = enableSnapping || isShift;
 
-        if (shouldSnap && isPainting)
+        if (shouldSnap && isPainting && !isAlt)
         {
             if (Input.GetMouseButtonDown(0))
             {
@@ -299,12 +307,48 @@ public class PanoramaPaintGPU : MonoBehaviour
                 if (layerManager != null) layerManager.SaveActiveLayerState();
                 strokeInProgress = true;
             }
-            if (lastUvPos == null) lastUvPos = currentCursorUV;
-            PaintStroke(lastUvPos.Value, currentCursorUV);
-            lastUvPos = currentCursorUV;
+
+            // Line tool mode with Alt
+            if (isAlt)
+            {
+                if (Input.GetMouseButtonDown(0))
+                {
+                    lineToolActive = true;
+                    lineStartUV = currentCursorUV;
+                    lineStartP3D = currentP3D;
+                    
+                    // Create preview RT and copy current layer state
+                    if (linePreviewRT == null || linePreviewRT.width != targetTexture.width || linePreviewRT.height != targetTexture.height)
+                    {
+                        if (linePreviewRT != null) linePreviewRT.Release();
+                        linePreviewRT = new RenderTexture(targetTexture.width, targetTexture.height, 0, RenderTextureFormat.ARGB32);
+                        linePreviewRT.Create();
+                    }
+                    Graphics.Blit(targetTexture, linePreviewRT);
+                }
+                
+                // Show preview while dragging
+                if (lineToolActive)
+                {
+                    // Restore original state
+                    Graphics.Blit(linePreviewRT, targetTexture);
+                    // Draw preview line
+                    DrawLineStraight(lineStartP3D, currentP3D);
+                    if (layerManager != null) layerManager.compositionDirty = true;
+                }
+            }
+            else
+            {
+                // Normal brush behavior
+                if (lastUvPos == null) lastUvPos = currentCursorUV;
+                PaintStroke(lastUvPos.Value, currentCursorUV);
+                lastUvPos = currentCursorUV;
+            }
         }
         else
         {
+            // Mouse released
+            lineToolActive = false;
             lastUvPos = null;
             strokeInProgress = false;
         }
@@ -748,6 +792,57 @@ public class PanoramaPaintGPU : MonoBehaviour
             DrawBrushQuad(pos, brushScaleX, brushScaleY);
             if (pos.x < brushScaleX) DrawBrushQuad(new Vector2(pos.x + 1.0f, pos.y), brushScaleX, brushScaleY);
             if (pos.x > 1.0f - brushScaleX) DrawBrushQuad(new Vector2(pos.x - 1.0f, pos.y), brushScaleX, brushScaleY);
+        }
+        GL.End();
+        GL.PopMatrix();
+        RenderTexture.active = null;
+    }
+
+    void DrawLineStraight(Vector3 startP3D, Vector3 endP3D)
+    {
+        if (isEraser && eraserMaterial == null) return;
+        if (!isEraser && brushMaterial == null) return;
+        if (targetTexture == null) return;
+
+        RenderTexture.active = targetTexture;
+        GL.PushMatrix();
+        GL.LoadPixelMatrix(0, 1, 0, 1);
+
+        if (isEraser)
+        {
+            eraserMaterial.SetPass(0);
+            GL.Begin(GL.QUADS);
+            GL.Color(new Color(0, 0, 0, 1));
+        }
+        else
+        {
+            brushMaterial.SetPass(0);
+            GL.Begin(GL.QUADS);
+            GL.Color(drawColor);
+        }
+
+        float currentSize = isEraser ? eraserSize : brushSize;
+        float effectiveSize = GetEffectiveBrushSize(currentSize);
+        float brushScaleY = effectiveSize / targetTexture.height;
+        float brushScaleX = brushScaleY * ((float)targetTexture.height / targetTexture.width);
+
+        // Calculate 3D distance and interpolate in 3D space
+        float distance3D = Vector3.Distance(startP3D, endP3D);
+        float arcLength = Mathf.Acos(Mathf.Clamp(Vector3.Dot(startP3D, endP3D), -1f, 1f));
+        float stepSize = Mathf.Max(0.0001f, brushScaleY * brushSpacing);
+        int steps = Mathf.CeilToInt(arcLength / stepSize);
+        if (steps <= 0) steps = 1;
+
+        for (int i = 0; i <= steps; i++)
+        {
+            float t = (float)i / steps;
+            // Slerp for straight line on sphere
+            Vector3 p3D = Vector3.Slerp(startP3D, endP3D, t).normalized;
+            Vector2 uv = SphereVectorToUV(p3D);
+            
+            DrawBrushQuad(uv, brushScaleX, brushScaleY);
+            if (uv.x < brushScaleX) DrawBrushQuad(new Vector2(uv.x + 1.0f, uv.y), brushScaleX, brushScaleY);
+            if (uv.x > 1.0f - brushScaleX) DrawBrushQuad(new Vector2(uv.x - 1.0f, uv.y), brushScaleX, brushScaleY);
         }
         GL.End();
         GL.PopMatrix();

@@ -25,7 +25,7 @@ public class PanoramaUI : MonoBehaviour
 
     // Dimensions
     private float uiWidth = 450f;
-    private float baseHeight = 510f; 
+    private float baseHeight = 550f; 
     private float colorPickerHeight = 120f; // Adjusted for single slider
     private float gridControlsHeight = 200f; 
 
@@ -130,6 +130,7 @@ public class PanoramaUI : MonoBehaviour
         GUILayout.Space(5);
         DrawLabelWithShadow("Align Grid to View: [Shift+G]");
         DrawLabelWithShadow("Temp Snap: Hold [Shift]"); 
+        DrawLabelWithShadow("Straight Line: Hold [Alt]"); 
 
         GUILayout.Space(15);
         
@@ -162,12 +163,6 @@ public class PanoramaUI : MonoBehaviour
             painter.useSmartBrush = GUILayout.Toggle(painter.useSmartBrush, " Smart Brush (Scale with FOV)");
             
             GUI.color = originalColor; // Reset color
-            
-            if (painter.useDiagonalSnapping) GUI.color = Color.green;
-            
-            painter.useDiagonalSnapping = GUILayout.Toggle(painter.useDiagonalSnapping, " 45° Snap Mode [F]");
-            
-            GUI.color = originalColor; 
             GUILayout.Space(5);
             
             // --- COLOR PICKER ---
@@ -219,7 +214,7 @@ public class PanoramaUI : MonoBehaviour
         if (showGridControls)
         {
             GUILayout.Space(15);
-            GUI.color = activeToolColor; 
+            Color originalColor = GUI.color;
             
             DrawLabelWithShadow($"Grid Spacing: {painter.gridSpacing:F1}");
             painter.gridSpacing = GUILayout.HorizontalSlider(painter.gridSpacing, 2.0f, 45.0f);
@@ -231,6 +226,12 @@ public class PanoramaUI : MonoBehaviour
             painter.gridOpacity = GUILayout.HorizontalSlider(painter.gridOpacity, 0.0f, 1.0f);
 
             GUI.color = textColor; 
+
+            if (painter.useDiagonalSnapping) GUI.color = Color.green;
+            
+            painter.useDiagonalSnapping = GUILayout.Toggle(painter.useDiagonalSnapping, " 45° Snap Mode [F]");
+            
+            GUI.color = originalColor; 
         }
 
         GUILayout.EndVertical();
