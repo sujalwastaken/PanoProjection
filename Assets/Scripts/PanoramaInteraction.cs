@@ -555,7 +555,10 @@ public class PanoramaPaintGPU : MonoBehaviour
 
         if (isSnappingActive)
         {
-            gridCompositeMat.SetVector("_GhostNormal", new Vector4(activeSnapNormal.x, activeSnapNormal.y, activeSnapNormal.z, 1.0f));
+            // Transform ghost normal to grid-local space
+            Quaternion gridRot = Quaternion.Euler(gridRotation);
+            Vector3 localNormal = Quaternion.Inverse(gridRot) * activeSnapNormal;
+            gridCompositeMat.SetVector("_GhostNormal", new Vector4(localNormal.x, localNormal.y, localNormal.z, 1.0f));
         }
         else
         {
