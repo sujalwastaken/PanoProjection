@@ -27,7 +27,7 @@ public class PanoramaUI : MonoBehaviour
     private float uiWidth = 450f;
     private float baseHeight = 510f; 
     private float colorPickerHeight = 120f; // Adjusted for single slider
-    private float gridControlsHeight = 180f; 
+    private float gridControlsHeight = 200f; 
 
     void Start()
     {
@@ -162,6 +162,12 @@ public class PanoramaUI : MonoBehaviour
             painter.useSmartBrush = GUILayout.Toggle(painter.useSmartBrush, " Smart Brush (Scale with FOV)");
             
             GUI.color = originalColor; // Reset color
+            
+            if (painter.useDiagonalSnapping) GUI.color = Color.green;
+            
+            painter.useDiagonalSnapping = GUILayout.Toggle(painter.useDiagonalSnapping, " 45° Snap Mode [F]");
+            
+            GUI.color = originalColor; 
             GUILayout.Space(5);
             
             // --- COLOR PICKER ---

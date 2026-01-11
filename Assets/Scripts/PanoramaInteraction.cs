@@ -24,6 +24,8 @@ public class PanoramaPaintGPU : MonoBehaviour
     [Header("Perspective Ruler")]
     [Tooltip("Toggle with 'S'")]
     public bool enableSnapping = false;
+    [Tooltip("Toggle with 'F'")]
+    public bool useDiagonalSnapping = false;
     [Tooltip("Toggle with 'G'")]
     public bool showGrid = false;
 
@@ -47,6 +49,8 @@ public class PanoramaPaintGPU : MonoBehaviour
     private Color lastGridColorZ;
     private Vector3 lastGridRotation;
     private bool lastShowGrid;
+    private bool lastDiagonalMode;
+    private bool isSnappingActive = false;
 
     [Header("Snapping")]
     public float rulerLockThreshold = 0.005f;
@@ -94,7 +98,8 @@ public class PanoramaPaintGPU : MonoBehaviour
 
     // Ruler state
     private Vector3 strokeStartP3D;
-    private int lockedAxis = -1;
+    private int lockedAxis = -1; // -1: None, 0-2: Primary, 10-15: Diagonals
+    private Vector3 activeSnapNormal = Vector3.zero;
 
     void Start()
     {
@@ -126,6 +131,7 @@ public class PanoramaPaintGPU : MonoBehaviour
         lastGridColorZ = gridColorZ;
         lastGridRotation = gridRotation;
         lastShowGrid = showGrid;
+        lastDiagonalMode = useDiagonalSnapping;
     }
 
     void OnDestroy()
@@ -172,6 +178,7 @@ public class PanoramaPaintGPU : MonoBehaviour
 
         HandleToolInput();
 
+        isSnappingActive = false;
         // --- UPDATE CURSOR STATE ---
         // Only update if the tool changed or we entered/exited UI mode (implied by targetTexture null/not null check potentially)
         if (isEraser != wasEraser)
@@ -215,6 +222,20 @@ public class PanoramaPaintGPU : MonoBehaviour
                 lockedAxis = -1;
             }
             currentP3D = ApplyPerspectiveRuler(currentP3D);
+            if (lockedAxis != -1)
+            {
+                isSnappingActive = true;
+                if (layerManager != null) layerManager.compositionDirty = true;
+            }
+        }
+        else
+        {
+            // Reset locked axis when not painting
+            if (lockedAxis != -1)
+            {
+                lockedAxis = -1;
+                if (layerManager != null) layerManager.compositionDirty = true;
+            }
         }
 
         Vector2 currentCursorUV = SphereVectorToUV(currentP3D);
@@ -435,6 +456,12 @@ public class PanoramaPaintGPU : MonoBehaviour
             enableSnapping = !enableSnapping;
         }
 
+        if (Input.GetKeyDown(KeyCode.F))
+        {
+            useDiagonalSnapping = !useDiagonalSnapping;
+            if (layerManager != null) layerManager.compositionDirty = true; // Update grid visual
+        }
+
         if (Input.GetKeyDown(KeyCode.Z) && isCtrl)
         {
             if (layerManager != null)
@@ -457,6 +484,7 @@ public class PanoramaPaintGPU : MonoBehaviour
         if (gridColorZ != lastGridColorZ) { lastGridColorZ = gridColorZ; changed = true; }
         if (gridRotation != lastGridRotation) { lastGridRotation = gridRotation; changed = true; }
         if (showGrid != lastShowGrid) { lastShowGrid = showGrid; changed = true; }
+        if (useDiagonalSnapping != lastDiagonalMode) { lastDiagonalMode = useDiagonalSnapping; changed = true; }
 
         return changed;
     }
@@ -474,8 +502,23 @@ public class PanoramaPaintGPU : MonoBehaviour
         }
 
         gridCompositeMat.SetFloat("_UseGrid", showGrid ? 1.0f : 0.0f);
+        // Pass diagonal mode to shader
+        gridCompositeMat.SetFloat("_ShowDiagonals", (useDiagonalSnapping || showGrid) ? 1.0f : 0.0f);
 
-        if (showGrid)
+        float axisToSend = isSnappingActive ? (float)lockedAxis : -1.0f;
+        
+        gridCompositeMat.SetFloat("_ActiveAxis", axisToSend);
+
+        if (isSnappingActive)
+        {
+            gridCompositeMat.SetVector("_GhostNormal", new Vector4(activeSnapNormal.x, activeSnapNormal.y, activeSnapNormal.z, 1.0f));
+        }
+        else
+        {
+            gridCompositeMat.SetVector("_GhostNormal", Vector4.zero);
+        }
+
+        if (showGrid || enableSnapping)
         {
             gridCompositeMat.SetColor("_ColorX", gridColorX);
             gridCompositeMat.SetColor("_ColorY", gridColorY);
@@ -494,12 +537,33 @@ public class PanoramaPaintGPU : MonoBehaviour
         projectionEffect.overlayTexture = displayTexture;
     }
 
+    // --- UPDATED PERSPECTIVE RULER WITH DIAGONAL SUPPORT ---
     Vector3 ApplyPerspectiveRuler(Vector3 currentP)
     {
         Quaternion gridRot = Quaternion.Euler(gridRotation);
-        Vector3 vpX = gridRot * Vector3.right;
-        Vector3 vpY = gridRot * Vector3.up;
-        Vector3 vpZ = gridRot * Vector3.forward;
+        
+        // Define Vanishing Points (Normal Axes)
+        Vector3[] primaryVPs = new Vector3[] 
+        {
+            gridRot * Vector3.right,   // X
+            gridRot * Vector3.up,      // Y
+            gridRot * Vector3.forward  // Z
+        };
+
+        // Define Vanishing Points (Diagonal Axes - 6 Axes, 12 intersections)
+        // Midpoints on great circles (XY, XZ, YZ)
+        Vector3[] diagonalVPs = new Vector3[]
+        {
+            gridRot * new Vector3(1, 1, 0).normalized,  // XY+
+            gridRot * new Vector3(-1, 1, 0).normalized, // XY-
+            gridRot * new Vector3(1, 0, 1).normalized,  // XZ+
+            gridRot * new Vector3(-1, 0, 1).normalized, // XZ-
+            gridRot * new Vector3(0, 1, 1).normalized,  // YZ+
+            gridRot * new Vector3(0, -1, 1).normalized  // YZ-
+        };
+
+        Vector3[] targetAxes = useDiagonalSnapping ? diagonalVPs : primaryVPs;
+        int startIndex = useDiagonalSnapping ? 10 : 0; // Just an offset for lockedAxis ID
 
         if (lockedAxis == -1)
         {
@@ -507,31 +571,37 @@ public class PanoramaPaintGPU : MonoBehaviour
             if (dist > rulerLockThreshold)
             {
                 Vector3 strokeDir = (currentP - strokeStartP3D).normalized;
-                Vector3 normX = Vector3.Cross(strokeStartP3D, vpX).normalized;
-                Vector3 tanX = Vector3.Cross(normX, strokeStartP3D).normalized;
-                Vector3 normY = Vector3.Cross(strokeStartP3D, vpY).normalized;
-                Vector3 tanY = Vector3.Cross(normY, strokeStartP3D).normalized;
-                Vector3 normZ = Vector3.Cross(strokeStartP3D, vpZ).normalized;
-                Vector3 tanZ = Vector3.Cross(normZ, strokeStartP3D).normalized;
+                
+                float bestDot = -1.0f;
+                int bestIndex = -1;
 
-                float dotX = Mathf.Abs(Vector3.Dot(strokeDir, tanX));
-                float dotY = Mathf.Abs(Vector3.Dot(strokeDir, tanY));
-                float dotZ = Mathf.Abs(Vector3.Dot(strokeDir, tanZ));
-
-                if (dotX > dotY && dotX > dotZ) lockedAxis = 0;
-                else if (dotY > dotX && dotY > dotZ) lockedAxis = 1;
-                else lockedAxis = 2;
+                // Iterate through available axes to find best alignment
+                for(int i=0; i<targetAxes.Length; i++)
+                {
+                    Vector3 vp = targetAxes[i];
+                    Vector3 planeNormal = Vector3.Cross(strokeStartP3D, vp).normalized;
+                    Vector3 tangent = Vector3.Cross(planeNormal, strokeStartP3D).normalized;
+                    
+                    float dot = Mathf.Abs(Vector3.Dot(strokeDir, tangent));
+                    if(dot > bestDot)
+                    {
+                        bestDot = dot;
+                        bestIndex = i;
+                    }
+                }
+                
+                lockedAxis = startIndex + bestIndex;
             }
             else return currentP;
         }
 
-        Vector3 targetVP = Vector3.zero;
-        if (lockedAxis == 0) targetVP = vpX;
-        if (lockedAxis == 1) targetVP = vpY;
-        if (lockedAxis == 2) targetVP = vpZ;
+        int index = lockedAxis - startIndex;
+        if(index < 0 || index >= targetAxes.Length) index = 0; // Fallback
 
-        Vector3 planeNormal = Vector3.Cross(strokeStartP3D, targetVP).normalized;
-        return Vector3.ProjectOnPlane(currentP, planeNormal).normalized;
+        Vector3 targetVP = targetAxes[index];
+        Vector3 finalNormal = Vector3.Cross(strokeStartP3D, targetVP).normalized;
+        activeSnapNormal = finalNormal;
+        return Vector3.ProjectOnPlane(currentP, finalNormal).normalized;
     }
 
     Vector3 ScreenPointToSphereVector(Vector2 screenUV)

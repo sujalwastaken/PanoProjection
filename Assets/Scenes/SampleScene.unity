@@ -270,10 +270,11 @@ MonoBehaviour:
   customPenCursor: {fileID: 0}
   cursorHotspot: {x: 0, y: 0}
   enableSnapping: 0
+  useDiagonalSnapping: 0
   showGrid: 1
   gridRotation: {x: 0, y: 0, z: 0}
   gridSpacing: 5
-  gridThickness: 1.25
+  gridThickness: 0.1
   gridOpacity: 0.25
   gridColorX: {r: 1, g: 0, b: 0, a: 1}
   gridColorY: {r: 0, g: 1, b: 0, a: 1}
@@ -283,7 +284,7 @@ MonoBehaviour:
   eraserSize: 30
   brushSpacing: 0.05
   hardness: 1
-  useSmartBrush: 0
+  useSmartBrush: 1
   isEraser: 0
   targetTexture: {fileID: 0}
   allowCameraMovement: 0
