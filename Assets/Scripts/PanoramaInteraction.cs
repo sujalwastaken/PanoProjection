@@ -314,10 +314,25 @@ public class PanoramaPaintGPU : MonoBehaviour
                 if (Input.GetMouseButtonDown(0))
                 {
                     lineToolActive = true;
-                    lineStartUV = currentCursorUV;
-                    lineStartP3D = currentP3D;
                     
-                    // Create preview RT and copy current layer state
+                    // --- SNAP START POINT ---
+                    lockedAxis = -1; 
+                    strokeStartP3D = currentP3D;
+                    
+                    if (enableSnapping || isShift)
+                    {
+                        lineStartP3D = ApplyPerspectiveRuler(currentP3D);
+                        // FIX: If start point snapped, show the ghost line immediately
+                        if (lockedAxis != -1) isSnappingActive = true; 
+                    }
+                    else
+                    {
+                        lineStartP3D = currentP3D;
+                    }
+                    
+                    lineStartUV = SphereVectorToUV(lineStartP3D);
+                    // ------------------------
+                    
                     if (linePreviewRT == null || linePreviewRT.width != targetTexture.width || linePreviewRT.height != targetTexture.height)
                     {
                         if (linePreviewRT != null) linePreviewRT.Release();
@@ -330,10 +345,24 @@ public class PanoramaPaintGPU : MonoBehaviour
                 // Show preview while dragging
                 if (lineToolActive)
                 {
-                    // Restore original state
                     Graphics.Blit(linePreviewRT, targetTexture);
-                    // Draw preview line
-                    DrawLineStraight(lineStartP3D, currentP3D);
+                    
+                    Vector3 endP3D = currentP3D;
+                    
+                    if (enableSnapping || isShift)
+                    {
+                        strokeStartP3D = lineStartP3D; 
+                        endP3D = ApplyPerspectiveRuler(currentP3D);
+
+                        // --- FIX: TELL SHADER WE ARE SNAPPING ---
+                        if (lockedAxis != -1)
+                        {
+                            isSnappingActive = true;
+                        }
+                        // ----------------------------------------
+                    }
+
+                    DrawLineStraight(lineStartP3D, endP3D);
                     if (layerManager != null) layerManager.compositionDirty = true;
                 }
             }
