@@ -149,6 +149,52 @@ public class AnimationLayer : GroupLayer
         }
         return -1;
     }
+    
+    public int GetNthCellIndexRelative(int baseFrame, int n, int direction, int totalFrames = 0, bool loop = false)
+    {
+        if (n <= 0 || direction == 0) return -1;
+
+        if (timelineMap.Count == 0) return -1;
+
+        // Build sorted list of frames
+        List<int> frames = new List<int>(timelineMap.Keys);
+        frames.Sort();
+
+        int count = frames.Count;
+
+        if (direction > 0)
+        {
+            // Find first frame strictly greater than baseFrame
+            int start = -1;
+            for (int i = 0; i < count; i++) if (frames[i] > baseFrame) { start = i; break; }
+            if (start == -1)
+            {
+                if (loop) start = 0; else return -1;
+            }
+
+            int idx = (start + (n - 1)) % count;
+            if (!loop && start + (n - 1) >= count) return -1;
+            return timelineMap[frames[idx]];
+        }
+        else
+        {
+            // direction < 0: find last frame strictly less than baseFrame
+            int start = -1;
+            for (int i = count - 1; i >= 0; i--) if (frames[i] < baseFrame) { start = i; break; }
+            if (start == -1)
+            {
+                if (loop) start = count - 1; else return -1;
+            }
+
+            int idx = start - (n - 1);
+            if (idx < 0)
+            {
+                if (loop) idx = ((idx % count) + count) % count; else return -1;
+            }
+
+            return timelineMap[frames[idx]];
+        }
+    }
 }
 
 public class CameraLayer : GroupLayer

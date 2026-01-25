@@ -266,7 +266,7 @@ MonoBehaviour:
   gridCompositeShader: {fileID: 4800000, guid: b34466725eddab543a90441558325766, type: 3}
   rotateSpeed: 4
   zoomSpeed: 2
-  drawColor: {r: 1, g: 0, b: 0, a: 1}
+  drawColor: {r: 0, g: 0, b: 0, a: 1}
   customPenCursor: {fileID: 0}
   cursorHotspot: {x: 0, y: 0}
   enableSnapping: 0
@@ -322,11 +322,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   compositeShader: {fileID: 10753, guid: 0000000000000000f000000000000000, type: 0}
+  onionSkinShader: {fileID: 4800000, guid: 169aa5deca5a5e54bb725be7f5566226, type: 3}
   reduceResolutionOnPlay: 1
   exportWidth: 1920
   exportHeight: 1080
   currentFrame: 0
-  totalFrames: 24
+  totalFrames: 48
   fps: 24
   isPlaying: 0
   loop: 1
@@ -334,6 +335,12 @@ MonoBehaviour:
   isHoveringGraph: 0
   isExporting: 0
   compositionDirty: 1
+  onionEnabled: 1
+  onionBefore: 1
+  onionAfter: 1
+  onionOpacity: 0.35
+  onionColorBefore: {r: 0, g: 0, b: 1, a: 1}
+  onionColorAfter: {r: 0, g: 1, b: 0, a: 1}
 --- !u!114 &963194234
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -12,7 +12,9 @@ public class PanoramaLayerManager : MonoBehaviour
 {
     [Header("Composition Settings")]
     public Shader compositeShader;
+    public Shader onionSkinShader;
     private Material compositeMat;
+    private Material onionMat;
 
     [Header("Performance")]
     [Tooltip("Reduces resolution during playback to ensure smooth framerate.")]
@@ -42,6 +44,15 @@ public class PanoramaLayerManager : MonoBehaviour
     private float timer;
     public bool compositionDirty = true;
 
+    // --- Onion Skin Settings ---
+    [Header("Onion Skin")]
+    public bool onionEnabled = false;
+    [Range(0, 5)] public int onionBefore = 1;
+    [Range(0, 5)] public int onionAfter = 1;
+    [Range(0f, 1f)] public float onionOpacity = 0.35f;
+    public Color onionColorBefore = new Color(0f, 0f, 1f, 1f);  // Blue for previous frames
+    public Color onionColorAfter = new Color(0f, 1f, 0f, 1f);   // Green for next frames
+
     private bool showExportPopup = false;
     private float targetHeight = 1080f;
     private int exportFps = 12;
@@ -64,6 +75,9 @@ public class PanoramaLayerManager : MonoBehaviour
 
         if (compositeShader == null) compositeShader = Shader.Find("Sprites/Default");
         compositeMat = new Material(compositeShader);
+
+        if (onionSkinShader == null) onionSkinShader = Shader.Find("Hidden/OnionSkin");
+        onionMat = new Material(onionSkinShader);
 
         InitializeSystem();
     }
@@ -220,6 +234,54 @@ public class PanoramaLayerManager : MonoBehaviour
         GL.Clear(true, true, Color.clear);
         RenderTexture.active = null;
         RenderNode(root, canvasComposite, 1.0f);
+        
+        // NEW: Onion skin overlay: show previous/next visible cells
+        if (onionEnabled && activeLayer is PaintLayer pl && pl.parent is AnimationLayer animParent)
+        {
+            // Show previous cells
+            for (int i = 1; i <= onionBefore; i++)
+            {
+                int idx = animParent.GetNthCellIndexRelative(currentFrame, i, -1, totalFrames, loop);
+                if (idx != -1 && idx < animParent.children.Count)
+                {
+                    if (animParent.children[idx] is PaintLayer sibling)
+                    {
+                        // Skip if this is the currently visible cell (don't show it as onion)
+                        int currentVisibleIdx = animParent.GetActiveCellIndex(currentFrame);
+                        if (idx == currentVisibleIdx) continue;
+                        
+                        if (sibling.texture != null)
+                        {
+                            float falloff = 1.0f - (i - 1) * 0.2f;
+                            float weight = Mathf.Clamp01(onionOpacity * falloff);
+                            BlendLayerWithColor(sibling.texture, canvasComposite, weight, onionColorBefore);
+                        }
+                    }
+                }
+            }
+            
+            // Show next cells
+            for (int i = 1; i <= onionAfter; i++)
+            {
+                int idx = animParent.GetNthCellIndexRelative(currentFrame, i, 1, totalFrames, loop);
+                if (idx != -1 && idx < animParent.children.Count)
+                {
+                    if (animParent.children[idx] is PaintLayer sibling)
+                    {
+                        // Skip if this is the currently visible cell (don't show it as onion)
+                        int currentVisibleIdx = animParent.GetActiveCellIndex(currentFrame);
+                        if (idx == currentVisibleIdx) continue;
+                        
+                        if (sibling.texture != null)
+                        {
+                            float falloff = 1.0f - (i - 1) * 0.2f;
+                            float weight = Mathf.Clamp01(onionOpacity * falloff);
+                            BlendLayerWithColor(sibling.texture, canvasComposite, weight, onionColorAfter);
+                        }
+                    }
+                }
+            }
+        }
 
         // NEW: Apply grid overlay AFTER all layers are composited
         painter.UpdateGridDisplay(canvasComposite);
@@ -262,6 +324,25 @@ public class PanoramaLayerManager : MonoBehaviour
         GL.LoadOrtho();
         GL.Begin(GL.QUADS);
         GL.Color(new Color(1, 1, 1, alpha));
+        GL.TexCoord2(0, 0); GL.Vertex3(0, 0, 0);
+        GL.TexCoord2(0, 1); GL.Vertex3(0, 1, 0);
+        GL.TexCoord2(1, 1); GL.Vertex3(1, 1, 0);
+        GL.TexCoord2(1, 0); GL.Vertex3(1, 0, 0);
+        GL.End();
+        GL.PopMatrix();
+        RenderTexture.active = null;
+    }
+
+    void BlendLayerWithColor(Texture source, RenderTexture dest, float opacity, Color color)
+    {
+        RenderTexture.active = dest;
+        onionMat.mainTexture = source;
+        onionMat.SetColor("_Color", new Color(color.r, color.g, color.b, opacity));
+        onionMat.SetPass(0);
+        GL.PushMatrix();
+        GL.LoadOrtho();
+        GL.Begin(GL.QUADS);
+        GL.Color(Color.white);
         GL.TexCoord2(0, 0); GL.Vertex3(0, 0, 0);
         GL.TexCoord2(0, 1); GL.Vertex3(0, 1, 0);
         GL.TexCoord2(1, 1); GL.Vertex3(1, 1, 0);

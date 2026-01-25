@@ -754,6 +754,31 @@ public class PanoramaStudioUI : MonoBehaviour
             }
 
             layerManager.loop = GUILayout.Toggle(layerManager.loop, "Loop");
+
+            // Compact onion quick controls
+            if (layerManager != null)
+            {
+                GUILayout.Label($"B:{layerManager.onionBefore}", GUILayout.Width(36));
+                if (GUILayout.Button("-", GUILayout.Width(20))) { layerManager.onionBefore = Mathf.Max(0, layerManager.onionBefore - 1); layerManager.compositionDirty = true; }
+                if (GUILayout.Button("+", GUILayout.Width(20))) { layerManager.onionBefore = Mathf.Min(5, layerManager.onionBefore + 1); layerManager.compositionDirty = true; }
+                GUILayout.Space(20);
+
+                GUILayout.Label($"A:{layerManager.onionAfter}", GUILayout.Width(36));
+                if (GUILayout.Button("-", GUILayout.Width(20))) { layerManager.onionAfter = Mathf.Max(0, layerManager.onionAfter - 1); layerManager.compositionDirty = true; }
+                if (GUILayout.Button("+", GUILayout.Width(20))) { layerManager.onionAfter = Mathf.Min(5, layerManager.onionAfter + 1); layerManager.compositionDirty = true; }
+                GUILayout.Space(20);
+
+                GUILayout.Label($"Opacity:{layerManager.onionOpacity:F2}", GUILayout.Width(130));
+                float prevOpacity = layerManager.onionOpacity;
+                layerManager.onionOpacity = GUILayout.HorizontalSlider(layerManager.onionOpacity, 0f, 1f, GUILayout.Width(120));
+                if (!Mathf.Approximately(prevOpacity, layerManager.onionOpacity)) layerManager.compositionDirty = true;
+                GUILayout.Space(20);
+
+                bool prevOnion = layerManager.onionEnabled;
+                layerManager.onionEnabled = GUILayout.Toggle(layerManager.onionEnabled, "Onion");
+                if (prevOnion != layerManager.onionEnabled) layerManager.compositionDirty = true;
+            }
+
             GUILayout.EndHorizontal();
             GUILayout.Space(10);
 
