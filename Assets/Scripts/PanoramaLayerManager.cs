@@ -47,6 +47,7 @@ public class PanoramaLayerManager : MonoBehaviour
     // --- Onion Skin Settings ---
     [Header("Onion Skin")]
     public bool onionEnabled = false;
+    public bool onionSkinLoop = true;
     [Range(0, 5)] public int onionBefore = 1;
     [Range(0, 5)] public int onionAfter = 1;
     [Range(0f, 1f)] public float onionOpacity = 0.35f;
@@ -235,49 +236,76 @@ public class PanoramaLayerManager : MonoBehaviour
         RenderTexture.active = null;
         RenderNode(root, canvasComposite, 1.0f);
         
-        // NEW: Onion skin overlay: show previous/next visible cells
-        if (onionEnabled && activeLayer is PaintLayer pl && pl.parent is AnimationLayer animParent)
+        // --- ONION SKIN LOGIC ---
+        if (onionEnabled && activeLayer != null)
         {
-            // Show previous cells
-            for (int i = 1; i <= onionBefore; i++)
+            AnimationLayer animParent = null;
+            if (activeLayer is AnimationLayer al) animParent = al;
+            else if (activeLayer.parent is AnimationLayer pl) animParent = pl;
+
+            if (animParent != null && animParent.timelineMap.Count > 0)
             {
-                int idx = animParent.GetNthCellIndexRelative(currentFrame, i, -1, totalFrames, loop);
-                if (idx != -1 && idx < animParent.children.Count)
+                // Get all keyframes sorted
+                List<int> keys = animParent.timelineMap.Keys.ToList();
+                keys.Sort();
+
+                // Find current index
+                int currentKeyIndex = -1;
+                for (int i = 0; i < keys.Count; i++)
                 {
-                    if (animParent.children[idx] is PaintLayer sibling)
+                    if (keys[i] <= currentFrame) currentKeyIndex = i;
+                    else break;
+                }
+                
+                // If before first keyframe, check loop setting
+                if (currentKeyIndex == -1 && onionSkinLoop) currentKeyIndex = keys.Count - 1;
+
+                if (currentKeyIndex != -1)
+                {
+                    int count = keys.Count;
+
+                    // Helper to draw onion skin
+                    void DrawOnion(int keyIndex, float opacityBase, Color tint)
                     {
-                        // Skip if this is the currently visible cell (don't show it as onion)
-                        int currentVisibleIdx = animParent.GetActiveCellIndex(currentFrame);
-                        if (idx == currentVisibleIdx) continue;
-                        
-                        if (sibling.texture != null)
+                        // Handle Looping based on new boolean
+                        if (onionSkinLoop)
                         {
-                            float falloff = 1.0f - (i - 1) * 0.2f;
-                            float weight = Mathf.Clamp01(onionOpacity * falloff);
-                            BlendLayerWithColor(sibling.texture, canvasComposite, weight, onionColorBefore);
+                            keyIndex = (keyIndex % count + count) % count;
+                        }
+                        else
+                        {
+                            if (keyIndex < 0 || keyIndex >= count) return;
+                        }
+
+                        // Don't draw self
+                        if (keyIndex == currentKeyIndex) return;
+
+                        int frame = keys[keyIndex];
+                        int cellIdx = animParent.timelineMap[frame];
+                        
+                        if (cellIdx >= 0 && cellIdx < animParent.children.Count)
+                        {
+                            PaintLayer layer = animParent.children[cellIdx] as PaintLayer;
+                            if (layer != null && layer.texture != null)
+                            {
+                                float weight = Mathf.Clamp01(onionOpacity * opacityBase);
+                                BlendLayerWithColor(layer.texture, canvasComposite, weight, tint);
+                            }
                         }
                     }
-                }
-            }
-            
-            // Show next cells
-            for (int i = 1; i <= onionAfter; i++)
-            {
-                int idx = animParent.GetNthCellIndexRelative(currentFrame, i, 1, totalFrames, loop);
-                if (idx != -1 && idx < animParent.children.Count)
-                {
-                    if (animParent.children[idx] is PaintLayer sibling)
+
+                    // Render "Before" frames
+                    for (int i = 1; i <= onionBefore; i++)
                     {
-                        // Skip if this is the currently visible cell (don't show it as onion)
-                        int currentVisibleIdx = animParent.GetActiveCellIndex(currentFrame);
-                        if (idx == currentVisibleIdx) continue;
-                        
-                        if (sibling.texture != null)
-                        {
-                            float falloff = 1.0f - (i - 1) * 0.2f;
-                            float weight = Mathf.Clamp01(onionOpacity * falloff);
-                            BlendLayerWithColor(sibling.texture, canvasComposite, weight, onionColorAfter);
-                        }
+                        float falloff = 1.0f - (i - 1) * 0.2f;
+                        DrawOnion(currentKeyIndex - i, falloff, onionColorBefore);
+                    }
+
+                    // Render "After" frames
+                    for (int i = 1; i <= onionAfter; i++)
+                    {
+                        float falloff = 1.0f - (i - 1) * 0.2f;
+                        DrawOnion(currentKeyIndex + i, falloff, onionColorAfter);
                     }
                 }
             }
