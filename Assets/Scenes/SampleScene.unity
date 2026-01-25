@@ -135,6 +135,9 @@ GameObject:
   - component: {fileID: 963194229}
   - component: {fileID: 963194231}
   - component: {fileID: 963194230}
+  - component: {fileID: 963194233}
+  - component: {fileID: 963194235}
+  - component: {fileID: 963194234}
   - component: {fileID: 963194232}
   m_Layer: 0
   m_Name: Main Camera
@@ -222,8 +225,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   projectionShader: {fileID: 4800000, guid: 1246e4529e8ac824e9e1dd462f17c92d, type: 3}
-  panoramaTexture: {fileID: 2800000, guid: 01013a00b87bbbd4ba10cf30d9f44eaa, type: 3}
-  overlayTexture: {fileID: 2800000, guid: 01013a00b87bbbd4ba10cf30d9f44eaa, type: 3}
+  panoramaTexture: {fileID: 2800000, guid: a241ff02a7184994f952346e6b5904a4, type: 3}
+  overlayTexture: {fileID: 2800000, guid: a241ff02a7184994f952346e6b5904a4, type: 3}
   perspective: 17.7
   fisheyePerspective: 0
   minFov: 6.5
@@ -261,25 +264,31 @@ MonoBehaviour:
   brushShader: {fileID: 10753, guid: 0000000000000000f000000000000000, type: 0}
   eraserShader: {fileID: 4800000, guid: 571d550733ef3d549b26e828a9958752, type: 3}
   gridCompositeShader: {fileID: 4800000, guid: b34466725eddab543a90441558325766, type: 3}
+  sphereBrushShader: {fileID: 4800000, guid: b47cfd12771e15145bd12b1e68d2fddf, type: 3}
   rotateSpeed: 4
   zoomSpeed: 2
-  drawColor: {r: 1, g: 0, b: 0, a: 1}
+  drawColor: {r: 0, g: 0, b: 0, a: 1}
+  customPenCursor: {fileID: 0}
+  cursorHotspot: {x: 0, y: 0}
   enableSnapping: 0
+  useDiagonalSnapping: 0
   showGrid: 1
   gridRotation: {x: 0, y: 0, z: 0}
   gridSpacing: 5
-  gridThickness: 1.25
+  gridThickness: 0.1
   gridOpacity: 0.25
   gridColorX: {r: 1, g: 0, b: 0, a: 1}
   gridColorY: {r: 0, g: 1, b: 0, a: 1}
   gridColorZ: {r: 0, g: 0, b: 1, a: 1}
   rulerLockThreshold: 0.005
-  brushSize: 5
-  eraserSize: 20
+  brushSize: 10
+  eraserSize: 30
   brushSpacing: 0.05
   hardness: 1
-  maxUndoSteps: 20
+  useSmartBrush: 1
   isEraser: 0
+  targetTexture: {fileID: 0}
+  allowCameraMovement: 0
 --- !u!95 &963194232
 Animator:
   serializedVersion: 5
@@ -301,6 +310,62 @@ Animator:
   m_AllowConstantClipSamplingOptimization: 1
   m_KeepAnimatorStateOnDisable: 0
   m_WriteDefaultValuesOnDisable: 0
+--- !u!114 &963194233
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 963194225}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 383447038eea63347babcb0a32db50e8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  compositeShader: {fileID: 10753, guid: 0000000000000000f000000000000000, type: 0}
+  onionSkinShader: {fileID: 4800000, guid: 169aa5deca5a5e54bb725be7f5566226, type: 3}
+  reduceResolutionOnPlay: 1
+  exportWidth: 1920
+  exportHeight: 1080
+  currentFrame: 0
+  totalFrames: 48
+  fps: 24
+  isPlaying: 0
+  loop: 1
+  ignoreShortcuts: 0
+  isHoveringGraph: 0
+  isExporting: 0
+  compositionDirty: 1
+  onionEnabled: 1
+  onionBefore: 1
+  onionAfter: 1
+  onionOpacity: 0.35
+  onionColorBefore: {r: 0, g: 0, b: 1, a: 1}
+  onionColorAfter: {r: 0, g: 1, b: 0, a: 1}
+--- !u!114 &963194234
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 963194225}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 554a07c67abea3f42b9aafdf7f9c16cc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!114 &963194235
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 963194225}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 78b9eab2c9698a7479f3bad833232698, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1 &1991774024
 GameObject:
   m_ObjectHideFlags: 1
