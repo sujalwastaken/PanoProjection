@@ -193,7 +193,7 @@ public class PanoramaStudioUI : MonoBehaviour
     private Vector2 windowDragMouseAnchor;
     private Vector2 windowDragPosAnchor;
 
-    private bool invertPanY = false;
+    private bool invertPanY = true;
     void DrawGraphWindow()
     {
         CameraLayer camLayer = FindRelevantCamera();
