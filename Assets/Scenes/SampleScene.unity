@@ -337,6 +337,7 @@ MonoBehaviour:
   isExporting: 0
   compositionDirty: 1
   onionEnabled: 1
+  onionSkinLoop: 1
   onionBefore: 1
   onionAfter: 1
   onionOpacity: 0.35
