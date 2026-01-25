@@ -12,12 +12,13 @@
         
         // Cursor Props
         _CursorUV ("Cursor Position (UV)", Vector) = (-1,-1,0,0)
-        _CursorRadius ("Cursor Radius (Y-Axis UV)", Float) = 0.05
+        _CursorRadius ("Cursor Radius (Normalized UV)", Float) = 0.05
         _CursorColor ("Cursor Color", Color) = (1,1,1,0.5)
     }
     SubShader
     {
         Tags { "RenderType"="Opaque" }
+        LOD 100
         Cull Off ZWrite Off ZTest Always
 
         Pass
@@ -57,11 +58,19 @@
                 return o;
             }
 
+            // Helper to get 3D vector from UV
+            float3 UVToDirection(float2 uv) {
+                float lon = (uv.x - 0.5) * 2.0 * UNITY_PI;
+                float lat = (0.5 - uv.y) * UNITY_PI;
+                float cosLat = cos(lat);
+                return float3(cosLat * sin(lon), sin(lat), cosLat * cos(lon));
+            }
+
             fixed4 frag(v2f i) : SV_Target {
                 const float INV_2PI = 1.0 / (2.0 * UNITY_PI);
                 const float INV_PI = 1.0 / UNITY_PI;
 
-                // --- PROJECTION ---
+                // --- 1. RAY PROJECTION (Screen -> 3D) ---
                 float2 coord = (i.uv - 0.5) * 2.0;
                 coord.x *= _AspectRatio;
 
@@ -85,6 +94,8 @@
                 }
 
                 float3 worldRay = mul((float3x3)_CameraRotation, normalize(rayDir));
+                
+                // --- 2. TEXTURE SAMPLING ---
                 float lon = atan2(worldRay.x, worldRay.z);
                 float lat = asin(clamp(worldRay.y, -1.0, 1.0));
 
@@ -92,27 +103,34 @@
                 panoUV.x = frac(lon * INV_2PI + 0.5);
                 panoUV.y = saturate(0.5 - lat * INV_PI);
 
-                // --- COMPOSITE ---
                 fixed4 panoCol = tex2D(_PanoramaTex, panoUV);
                 fixed4 drawCol = tex2D(_OverlayTex, panoUV);
                 fixed4 finalCol = lerp(panoCol, drawCol, drawCol.a);
 
-                // --- CURSOR DRAWING ---
-                float dx = abs(panoUV.x - _CursorUV.x);
-                if (dx > 0.5) dx = 1.0 - dx; // Wrap X
-
-                float dy = panoUV.y - _CursorUV.y;
-
-                // 2:1 Aspect Ratio Correction:
-                // Width is 2x Height. To make a circle, we must multiply dx by 2.0.
-                float effectiveDistSq = (dx * 2.0 * dx * 2.0) + (dy * dy);
-                float radiusSq = _CursorRadius * _CursorRadius;
-
-                if (effectiveDistSq < radiusSq)
+                // --- 3. 3D CURSOR RENDERING (DISTORTION FREE) ---
+                // Convert Cursor UV to 3D World Vector
+                float3 cursorDir = UVToDirection(_CursorUV);
+                
+                // Calculate Angle between current pixel ray and cursor center
+                // Dot product gives cos(angle). 
+                float dotVal = dot(normalize(worldRay), normalize(cursorDir));
+                
+                // Convert to actual angle in radians
+                // Clamp dotVal to handle float inaccuracies
+                float angle = acos(clamp(dotVal, -1.0, 1.0));
+                
+                // Convert Radius (which is in UV height units 0..0.5) to Radians (0..PI/2)
+                // _CursorRadius comes from C# as (size / height) * 0.5
+                // Height of map = PI radians.
+                float targetRadiusRad = _CursorRadius * UNITY_PI;
+                
+                // Check if inside the circle
+                if (angle < targetRadiusRad)
                 {
-                    // Ring Thickness (10% of radius)
-                    float innerRadiusSq = radiusSq * 0.81; // 0.9^2
-                    if (effectiveDistSq > innerRadiusSq)
+                    // Ring Thickness Logic (Inner 90% is transparent)
+                    float innerRadiusRad = targetRadiusRad * 0.9;
+                    
+                    if (angle > innerRadiusRad)
                     {
                         return _CursorColor;
                     }
