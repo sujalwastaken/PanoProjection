@@ -1,23 +1,18 @@
-Shader "Hidden/PanoramaEraser"
+Shader "Hidden/PanoramaBrush"
 {
     Properties
     {
-        // Color is unused for erasing, but kept for compatibility with script calls
-        _Color ("Draw Color", Color) = (1,1,1,1) 
+        _Color ("Draw Color", Color) = (1,0,0,1)
         _BrushCenter ("Brush Center (UV)", Vector) = (0,0,0,0)
         _BrushRadius ("Brush Radius (Radians)", Float) = 0.1
         _Hardness ("Hardness", Range(0,1)) = 0.8
     }
     SubShader
     {
-        // RenderOnTop to ensure it blends with existing buffers
-        Tags { "RenderType"="Transparent" "Queue"="Transparent+1" }
-        
-        // Multiplicative Blend: DestColor * SourceColor
-        // We will output white (1,1,1) with varying alpha to scale down the destination.
-        Blend DstColor Zero
-        
-        Cull Off ZWrite Off ZTest Always
+        Tags { "RenderType"="Transparent" "Queue"="Transparent" }
+        // Standard Alpha Blending
+        Blend SrcAlpha OneMinusSrcAlpha 
+        ZWrite Off ZTest Always
 
         Pass
         {
@@ -36,6 +31,7 @@ Shader "Hidden/PanoramaEraser"
                 float4 vertex : SV_POSITION;
             };
 
+            float4 _Color;
             float4 _BrushCenter; // xy = UV center
             float _BrushRadius;  // in Radians
             float _Hardness;
@@ -62,25 +58,24 @@ Shader "Hidden/PanoramaEraser"
                 float3 pixelDir = UVToDir(i.uv);
                 float3 brushDir = UVToDir(_BrushCenter.xy);
 
-                // 2. Calculate Angular Distance
+                // 2. Calculate Angular Distance (Great Circle Distance)
+                // dot(a,b) = cos(angle)
                 float dotVal = dot(normalize(pixelDir), normalize(brushDir));
                 float angle = acos(clamp(dotVal, -1.0, 1.0));
 
-                // 3. Check Brush Radius (optimization, though keepFactor handles it too)
-                if (angle > _BrushRadius) return float4(1,1,1,1); // Keep destination unchanged
+                // 3. Check Brush Radius
+                if (angle > _BrushRadius) discard;
 
-                // 4. Calculate "Erase Amount" based on hardness
-                // 1.0 at center, 0.0 at edge
+                // 4. Calculate Falloff (Hardness)
+                // 0 (center) -> 1 (edge)
                 float t = angle / _BrushRadius;
-                float eraseAmount = 1.0 - smoothstep(_Hardness, 1.0, t);
                 
-                // 5. Calculate "Keep Factor" for multiplicative blend
-                // 0.0 at center (fully erase), 1.0 at edge (keep fully)
-                float keepFactor = 1.0 - eraseAmount;
+                // Hardness logic:
+                // If hardness = 1.0, alpha stays 1.0 until edge.
+                // If hardness = 0.0, alpha linear fade from center.
+                float alpha = 1.0 - smoothstep(_Hardness, 1.0, t);
 
-                // Output white with keepFactor in alpha.
-                // Blend DstColor Zero result: Dest.rgba * float4(1,1,1, keepFactor)
-                return float4(1, 1, 1, keepFactor);
+                return float4(_Color.rgb, _Color.a * alpha);
             }
             ENDCG
         }

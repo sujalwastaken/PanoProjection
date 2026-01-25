@@ -10,6 +10,8 @@ public class PanoramaPaintGPU : MonoBehaviour
     public Shader brushShader;
     public Shader eraserShader;
     public Shader gridCompositeShader;
+    public Shader sphereBrushShader; // Ensure this is set to "Hidden/PanoramaBrush"
+    private Material sphereBrushMat;
 
     [Header("Interaction Settings")]
     public float rotateSpeed = 2.0f;
@@ -116,6 +118,7 @@ public class PanoramaPaintGPU : MonoBehaviour
         if (brushShader == null) brushShader = Shader.Find("Sprites/Default");
         if (eraserShader == null) eraserShader = Shader.Find("Hidden/PanoramaEraser");
         if (gridCompositeShader == null) gridCompositeShader = Shader.Find("Hidden/PanoramaGridComposite");
+        if (sphereBrushShader == null) sphereBrushShader = Shader.Find("Hidden/PanoramaBrush");
 
         SyncCameraFromTransform();
         InitializeGPUResources();
@@ -150,6 +153,10 @@ public class PanoramaPaintGPU : MonoBehaviour
 
     void InitializeGPUResources()
     {
+        if (sphereBrushShader != null)
+        {
+            sphereBrushMat = new Material(sphereBrushShader);
+        }
         GenerateBrushTexture();
         if (brushShader != null)
         {
@@ -779,41 +786,45 @@ public class PanoramaPaintGPU : MonoBehaviour
             }
         }
     }
-
+    
+    // --- REFACTORED PAINT STROKE (Unified 3D Shader Logic) ---
     void PaintStroke(Vector2 startUV, Vector2 endUV)
     {
-        if (isEraser && eraserMaterial == null) return;
-        if (!isEraser && brushMaterial == null) return;
         if (targetTexture == null) return;
+        
+        // 1. Select correct material
+        Material currentMat = isEraser ? eraserMaterial : sphereBrushMat;
+        if (currentMat == null) return;
 
         RenderTexture.active = targetTexture;
         GL.PushMatrix();
-        GL.LoadPixelMatrix(0, 1, 0, 1);
+        GL.LoadOrtho();
 
-        if (isEraser)
-        {
-            eraserMaterial.SetPass(0);
-            GL.Begin(GL.QUADS);
-            GL.Color(new Color(0, 0, 0, 1));
-        }
-        else
-        {
-            brushMaterial.SetPass(0);
-            GL.Begin(GL.QUADS);
-            GL.Color(drawColor);
-        }
+        // 2. Calculate Brush Size & Spacing
+        float currentSize = isEraser ? eraserSize : brushSize;
+        float effectiveSize = GetEffectiveBrushSize(currentSize);
+        // Radius in UV height units (0..0.5)
+        float radiusUV = (effectiveSize / targetTexture.height) * 0.5f; 
+        
+        // Convert Radius to Radians for the shader
+        float radiusRad = radiusUV * Mathf.PI;
 
+        // --- Set shared material properties once ---
+        // Eraser shader ignores color, but we set it anyway for simplicity
+        currentMat.SetColor("_Color", drawColor);
+        currentMat.SetFloat("_Hardness", hardness);
+        currentMat.SetFloat("_BrushRadius", radiusRad);
+        // -------------------------------------------
+
+        // 3. Path Calculation & Interpolation loop
         float dx = endUV.x - startUV.x;
         if (dx > 0.5f) endUV.x -= 1.0f;
         else if (dx < -0.5f) endUV.x += 1.0f;
 
-        float currentSize = isEraser ? eraserSize : brushSize;
-        float effectiveSize = GetEffectiveBrushSize(currentSize);
-        float brushScaleY = effectiveSize / targetTexture.height;
-        float brushScaleX = brushScaleY * ((float)targetTexture.height / targetTexture.width);
-
         float distance = Vector2.Distance(startUV, endUV);
-        float stepSize = Mathf.Max(0.0001f, brushScaleY * brushSpacing);
+        // Use diameter for spacing to ensure overlaps fill gaps
+        float stepSize = Mathf.Max(0.0001f, (radiusUV * 2.0f) * brushSpacing);
+        
         int steps = Mathf.CeilToInt(distance / stepSize);
         if (steps <= 0) steps = 1;
 
@@ -821,97 +832,152 @@ public class PanoramaPaintGPU : MonoBehaviour
         {
             float t = (float)i / steps;
             Vector2 pos = Vector2.Lerp(startUV, endUV, t);
-            DrawBrushQuad(pos, brushScaleX, brushScaleY);
-            if (pos.x < brushScaleX) DrawBrushQuad(new Vector2(pos.x + 1.0f, pos.y), brushScaleX, brushScaleY);
-            if (pos.x > 1.0f - brushScaleX) DrawBrushQuad(new Vector2(pos.x - 1.0f, pos.y), brushScaleX, brushScaleY);
+            // Normalize X wrap for shading
+            pos.x = Mathf.Repeat(pos.x, 1.0f);
+
+            // Update center position and apply pass
+            currentMat.SetVector("_BrushCenter", new Vector4(pos.x, pos.y, 0, 0));
+            currentMat.SetPass(0); 
+
+            // --- Draw Latitude-Compensated Bounding Box ---
+            // This draws a quad just big enough to contain the sphere circle,
+            // accounting for distortion at poles.
+            float lat = (pos.y - 0.5f) * Mathf.PI; 
+            float yMin = pos.y - radiusUV;
+            float yMax = pos.y + radiusUV;
+
+            // If near pole (abs(lat) > ~68 deg), draw full width strip to be safe
+            if (Mathf.Abs(lat) > 1.2f) {
+                GL.Begin(GL.QUADS);
+                GL.TexCoord2(0, yMin); GL.Vertex3(0, yMin, 0);
+                GL.TexCoord2(0, yMax); GL.Vertex3(0, yMax, 0);
+                GL.TexCoord2(1, yMax); GL.Vertex3(1, yMax, 0);
+                GL.TexCoord2(1, yMin); GL.Vertex3(1, yMin, 0);
+                GL.End();
+            } else {
+                float stretch = 1.0f / Mathf.Cos(lat);
+                // xRadius needs 2:1 aspect correction (0.5f) times stretch
+                float xRadius = radiusUV * stretch * 0.5f; 
+                float xMin = pos.x - xRadius;
+                float xMax = pos.x + xRadius;
+
+                GL.Begin(GL.QUADS);
+                GL.TexCoord2(xMin, yMin); GL.Vertex3(xMin, yMin, 0);
+                GL.TexCoord2(xMin, yMax); GL.Vertex3(xMin, yMax, 0);
+                GL.TexCoord2(xMax, yMax); GL.Vertex3(xMax, yMax, 0);
+                GL.TexCoord2(xMax, yMin); GL.Vertex3(xMax, yMin, 0);
+                GL.End();
+                
+                // Handle wrap-around for the bounding box
+                if (xMin < 0) {
+                    GL.Begin(GL.QUADS);
+                    GL.TexCoord2(xMin+1, yMin); GL.Vertex3(xMin+1, yMin, 0);
+                    GL.TexCoord2(xMin+1, yMax); GL.Vertex3(xMin+1, yMax, 0);
+                    GL.TexCoord2(xMax+1, yMax); GL.Vertex3(xMax+1, yMax, 0);
+                    GL.TexCoord2(xMax+1, yMin); GL.Vertex3(xMax+1, yMin, 0);
+                    GL.End();
+                } else if (xMax > 1) {
+                    GL.Begin(GL.QUADS);
+                    GL.TexCoord2(xMin-1, yMin); GL.Vertex3(xMin-1, yMin, 0);
+                    GL.TexCoord2(xMin-1, yMax); GL.Vertex3(xMin-1, yMax, 0);
+                    GL.TexCoord2(xMax-1, yMax); GL.Vertex3(xMax-1, yMax, 0);
+                    GL.TexCoord2(xMax-1, yMin); GL.Vertex3(xMax-1, yMin, 0);
+                    GL.End();
+                }
+            }
         }
-        GL.End();
+
         GL.PopMatrix();
         RenderTexture.active = null;
     }
 
+    // --- REFACTORED LINE TOOL (Unified 3D Shader Logic) ---
     void DrawLineStraight(Vector3 startP3D, Vector3 endP3D)
     {
-        if (isEraser && eraserMaterial == null) return;
-        if (!isEraser && brushMaterial == null) return;
         if (targetTexture == null) return;
+
+        // 1. Select correct material
+        Material currentMat = isEraser ? eraserMaterial : sphereBrushMat;
+        if (currentMat == null) return;
 
         RenderTexture.active = targetTexture;
         GL.PushMatrix();
-        GL.LoadPixelMatrix(0, 1, 0, 1);
+        GL.LoadOrtho();
 
-        if (isEraser)
-        {
-            eraserMaterial.SetPass(0);
-            GL.Begin(GL.QUADS);
-            GL.Color(new Color(0, 0, 0, 1));
-        }
-        else
-        {
-            brushMaterial.SetPass(0);
-            GL.Begin(GL.QUADS);
-            GL.Color(drawColor);
-        }
-
+        // 2. Calculate Brush Size & Spacing
         float currentSize = isEraser ? eraserSize : brushSize;
         float effectiveSize = GetEffectiveBrushSize(currentSize);
-        float brushScaleY = effectiveSize / targetTexture.height;
-        float brushScaleX = brushScaleY * ((float)targetTexture.height / targetTexture.width);
+        float radiusUV = (effectiveSize / targetTexture.height) * 0.5f;
+        float radiusRad = radiusUV * Mathf.PI;
+        
+        float stepSize = Mathf.Max(0.0001f, (radiusUV * 2.0f) * brushSpacing);
 
-        // Calculate 3D distance and interpolate in 3D space
-        float distance3D = Vector3.Distance(startP3D, endP3D);
+        // 3. Calculate 3D path
         float arcLength = Mathf.Acos(Mathf.Clamp(Vector3.Dot(startP3D, endP3D), -1f, 1f));
-        float stepSize = Mathf.Max(0.0001f, brushScaleY * brushSpacing);
         int steps = Mathf.CeilToInt(arcLength / stepSize);
         if (steps <= 0) steps = 1;
 
+        // --- Set shared material properties once ---
+        currentMat.SetColor("_Color", drawColor);
+        currentMat.SetFloat("_Hardness", hardness);
+        currentMat.SetFloat("_BrushRadius", radiusRad);
+        // -------------------------------------------
+
+        // 4. Interpolation loop
         for (int i = 0; i <= steps; i++)
         {
             float t = (float)i / steps;
-            // Slerp for straight line on sphere
+            // Slerp for straight line on sphere surface
             Vector3 p3D = Vector3.Slerp(startP3D, endP3D, t).normalized;
             Vector2 uv = SphereVectorToUV(p3D);
-            
-            DrawBrushQuad(uv, brushScaleX, brushScaleY);
-            if (uv.x < brushScaleX) DrawBrushQuad(new Vector2(uv.x + 1.0f, uv.y), brushScaleX, brushScaleY);
-            if (uv.x > 1.0f - brushScaleX) DrawBrushQuad(new Vector2(uv.x - 1.0f, uv.y), brushScaleX, brushScaleY);
+
+            // Update Center for this stamp
+            currentMat.SetVector("_BrushCenter", new Vector4(uv.x, uv.y, 0, 0));
+            currentMat.SetPass(0);
+
+            // --- Draw Latitude-Compensated Bounding Box (Same logic as PaintStroke) ---
+            float lat = (uv.y - 0.5f) * Mathf.PI;
+            float yMin = uv.y - radiusUV; float yMax = uv.y + radiusUV;
+
+            if (Mathf.Abs(lat) > 1.2f) {
+                GL.Begin(GL.QUADS);
+                GL.TexCoord2(0, yMin); GL.Vertex3(0, yMin, 0);
+                GL.TexCoord2(0, yMax); GL.Vertex3(0, yMax, 0);
+                GL.TexCoord2(1, yMax); GL.Vertex3(1, yMax, 0);
+                GL.TexCoord2(1, yMin); GL.Vertex3(1, yMin, 0);
+                GL.End();
+            } else {
+                float stretch = 1.0f / Mathf.Cos(lat);
+                float xRadius = radiusUV * stretch * 0.5f;
+                float xMin = uv.x - xRadius; float xMax = uv.x + xRadius;
+                
+                GL.Begin(GL.QUADS);
+                GL.TexCoord2(xMin, yMin); GL.Vertex3(xMin, yMin, 0);
+                GL.TexCoord2(xMin, yMax); GL.Vertex3(xMin, yMax, 0);
+                GL.TexCoord2(xMax, yMax); GL.Vertex3(xMax, yMax, 0);
+                GL.TexCoord2(xMax, yMin); GL.Vertex3(xMax, yMin, 0);
+                GL.End();
+
+                if(xMin < 0) {
+                    GL.Begin(GL.QUADS);
+                    GL.TexCoord2(xMin+1,yMin); GL.Vertex3(xMin+1,yMin,0);
+                    GL.TexCoord2(xMin+1,yMax); GL.Vertex3(xMin+1,yMax,0);
+                    GL.TexCoord2(xMax+1,yMax); GL.Vertex3(xMax+1,yMax,0);
+                    GL.TexCoord2(xMax+1,yMin); GL.Vertex3(xMax+1,yMin,0);
+                    GL.End();
+                } else if(xMax > 1) {
+                    GL.Begin(GL.QUADS);
+                    GL.TexCoord2(xMin-1,yMin); GL.Vertex3(xMin-1,yMin,0);
+                    GL.TexCoord2(xMin-1,yMax); GL.Vertex3(xMin-1,yMax,0);
+                    GL.TexCoord2(xMax-1,yMax); GL.Vertex3(xMax-1,yMax,0);
+                    GL.TexCoord2(xMax-1,yMin); GL.Vertex3(xMax-1,yMin,0);
+                    GL.End();
+                }
+            }
         }
-        GL.End();
+
         GL.PopMatrix();
         RenderTexture.active = null;
-    }
-
-    void DrawBrushQuad(Vector2 centerUV, float sizeX, float sizeY)
-    {
-        // 1. Calculate Latitude (Y) from UV
-        // UV.y = 0 is South Pole (-PI/2), UV.y = 1 is North Pole (+PI/2)
-        // We need the range -1 to 1 for the math
-        float lat = (centerUV.y - 0.5f) * 2.0f; // Range -1..1
-        
-        // 2. Calculate Distortion Compensation
-        // At poles (lat=1 or -1), cos(lat*PI/2) approaches 0.
-        // We scale the width (X) UP on the texture so it looks correct on the sphere.
-        // Formula: ScaleFactor = 1 / cos(latitude)
-        
-        // Clamp latitude to avoid division by zero at exact poles
-        float absLat = Mathf.Abs(lat);
-        absLat = Mathf.Min(absLat, 0.99f); 
-        
-        float scaleFactor = 1.0f / Mathf.Cos(absLat * (Mathf.PI / 2.0f));
-        
-        // Apply scaling to the X size
-        // Note: sizeX is already aspect-ratio corrected for the texture.
-        float correctedSizeX = sizeX * scaleFactor;
-
-        // 3. Draw the Quad
-        float halfX = correctedSizeX * 0.5f;
-        float halfY = sizeY * 0.5f;
-
-        // Standard Quad Drawing
-        GL.TexCoord2(0, 0); GL.Vertex3(centerUV.x - halfX, centerUV.y - halfY, 0);
-        GL.TexCoord2(0, 1); GL.Vertex3(centerUV.x - halfX, centerUV.y + halfY, 0);
-        GL.TexCoord2(1, 1); GL.Vertex3(centerUV.x + halfX, centerUV.y + halfY, 0);
-        GL.TexCoord2(1, 0); GL.Vertex3(centerUV.x + halfX, centerUV.y - halfY, 0);
     }
 
     void GenerateBrushTexture()

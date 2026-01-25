@@ -264,6 +264,7 @@ MonoBehaviour:
   brushShader: {fileID: 10753, guid: 0000000000000000f000000000000000, type: 0}
   eraserShader: {fileID: 4800000, guid: 571d550733ef3d549b26e828a9958752, type: 3}
   gridCompositeShader: {fileID: 4800000, guid: b34466725eddab543a90441558325766, type: 3}
+  sphereBrushShader: {fileID: 4800000, guid: b47cfd12771e15145bd12b1e68d2fddf, type: 3}
   rotateSpeed: 4
   zoomSpeed: 2
   drawColor: {r: 0, g: 0, b: 0, a: 1}
