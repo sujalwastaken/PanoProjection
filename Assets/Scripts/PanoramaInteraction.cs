@@ -881,14 +881,37 @@ public class PanoramaPaintGPU : MonoBehaviour
         RenderTexture.active = null;
     }
 
-    void DrawBrushQuad(Vector2 center, float sizeX, float sizeY)
+    void DrawBrushQuad(Vector2 centerUV, float sizeX, float sizeY)
     {
-        float halfX = sizeX * 0.5f;
+        // 1. Calculate Latitude (Y) from UV
+        // UV.y = 0 is South Pole (-PI/2), UV.y = 1 is North Pole (+PI/2)
+        // We need the range -1 to 1 for the math
+        float lat = (centerUV.y - 0.5f) * 2.0f; // Range -1..1
+        
+        // 2. Calculate Distortion Compensation
+        // At poles (lat=1 or -1), cos(lat*PI/2) approaches 0.
+        // We scale the width (X) UP on the texture so it looks correct on the sphere.
+        // Formula: ScaleFactor = 1 / cos(latitude)
+        
+        // Clamp latitude to avoid division by zero at exact poles
+        float absLat = Mathf.Abs(lat);
+        absLat = Mathf.Min(absLat, 0.99f); 
+        
+        float scaleFactor = 1.0f / Mathf.Cos(absLat * (Mathf.PI / 2.0f));
+        
+        // Apply scaling to the X size
+        // Note: sizeX is already aspect-ratio corrected for the texture.
+        float correctedSizeX = sizeX * scaleFactor;
+
+        // 3. Draw the Quad
+        float halfX = correctedSizeX * 0.5f;
         float halfY = sizeY * 0.5f;
-        GL.TexCoord2(0, 0); GL.Vertex3(center.x - halfX, center.y - halfY, 0);
-        GL.TexCoord2(0, 1); GL.Vertex3(center.x - halfX, center.y + halfY, 0);
-        GL.TexCoord2(1, 1); GL.Vertex3(center.x + halfX, center.y + halfY, 0);
-        GL.TexCoord2(1, 0); GL.Vertex3(center.x + halfX, center.y - halfY, 0);
+
+        // Standard Quad Drawing
+        GL.TexCoord2(0, 0); GL.Vertex3(centerUV.x - halfX, centerUV.y - halfY, 0);
+        GL.TexCoord2(0, 1); GL.Vertex3(centerUV.x - halfX, centerUV.y + halfY, 0);
+        GL.TexCoord2(1, 1); GL.Vertex3(centerUV.x + halfX, centerUV.y + halfY, 0);
+        GL.TexCoord2(1, 0); GL.Vertex3(centerUV.x + halfX, centerUV.y - halfY, 0);
     }
 
     void GenerateBrushTexture()
