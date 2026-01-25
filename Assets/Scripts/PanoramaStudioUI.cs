@@ -758,6 +758,15 @@ public class PanoramaStudioUI : MonoBehaviour
             // Compact onion quick controls
             if (layerManager != null)
             {
+                bool prevOnion = layerManager.onionEnabled;
+                layerManager.onionEnabled = GUILayout.Toggle(layerManager.onionEnabled, "Onion");
+                if (prevOnion != layerManager.onionEnabled) layerManager.compositionDirty = true;
+
+                // Add the new loop toggle UI
+                bool prevOnionLoop = layerManager.onionSkinLoop;
+                layerManager.onionSkinLoop = GUILayout.Toggle(layerManager.onionSkinLoop, "Loop Onion");
+                if (prevOnionLoop != layerManager.onionSkinLoop) layerManager.compositionDirty = true;
+
                 GUILayout.Label($"B:{layerManager.onionBefore}", GUILayout.Width(36));
                 if (GUILayout.Button("-", GUILayout.Width(20))) { layerManager.onionBefore = Mathf.Max(0, layerManager.onionBefore - 1); layerManager.compositionDirty = true; }
                 if (GUILayout.Button("+", GUILayout.Width(20))) { layerManager.onionBefore = Mathf.Min(5, layerManager.onionBefore + 1); layerManager.compositionDirty = true; }
@@ -773,10 +782,6 @@ public class PanoramaStudioUI : MonoBehaviour
                 layerManager.onionOpacity = GUILayout.HorizontalSlider(layerManager.onionOpacity, 0f, 1f, GUILayout.Width(120));
                 if (!Mathf.Approximately(prevOpacity, layerManager.onionOpacity)) layerManager.compositionDirty = true;
                 GUILayout.Space(20);
-
-                bool prevOnion = layerManager.onionEnabled;
-                layerManager.onionEnabled = GUILayout.Toggle(layerManager.onionEnabled, "Onion");
-                if (prevOnion != layerManager.onionEnabled) layerManager.compositionDirty = true;
             }
 
             GUILayout.EndHorizontal();
