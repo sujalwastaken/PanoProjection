@@ -96,7 +96,7 @@ public class PanoramaLayerManager : MonoBehaviour
         }
 
         root = new GroupLayer("Root");
-        PaintLayer defaultL = new PaintLayer("Background", fullWidth, fullHeight);
+        PaintLayer defaultL = new PaintLayer("Paper", fullWidth, fullHeight);
         defaultL.EnsureTextureAllocated();
 
         RenderTexture.active = defaultL.texture;
@@ -105,7 +105,8 @@ public class PanoramaLayerManager : MonoBehaviour
 
         defaultL.parent = root;
         root.children.Add(defaultL);
-        activeLayer = defaultL;
+
+        AddLayer(LayerType.Paint);
 
         RebuildCompositeCanvas();
 
