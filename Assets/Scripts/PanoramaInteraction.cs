@@ -67,17 +67,22 @@ public class PanoramaPaintGPU : MonoBehaviour
     public bool useSmartBrush = false; 
     private const float REFERENCE_FOV = 90.0f; // The baseline FOV
 
+    [Header("Undo Settings")]
+    [Range(1, 20)] public int maxUndoSteps = 10;
+
     [HideInInspector] public bool isEraser = false;
     private bool wasEraser = false; // To track state changes
 
     private Camera cam;
     private PanoramaProjectionEffect projectionEffect;
 
-    // Reference to Manager
-    private PanoramaLayerManager layerManager;
+    // Paint canvas + composite display (replaces targetTexture / layerManager)
+    private RenderTexture overlayTexture;
+    private RenderTexture displayTexture;
 
-    [HideInInspector] public RenderTexture targetTexture;
-    [HideInInspector] public bool allowCameraMovement = false;
+    // Undo / Redo
+    private List<RenderTexture> undoHistory = new List<RenderTexture>();
+    private List<RenderTexture> redoHistory = new List<RenderTexture>();
 
     private Texture2D brushTexture;
     private Material brushMaterial;
@@ -96,7 +101,7 @@ public class PanoramaPaintGPU : MonoBehaviour
     private float camRoll = 0f;
 
     // Grid display texture
-    private RenderTexture displayTexture;
+    // (displayTexture declared above, alongside overlayTexture)
 
     // Ruler state
     private Vector3 strokeStartP3D;
@@ -113,7 +118,6 @@ public class PanoramaPaintGPU : MonoBehaviour
     {
         cam = GetComponent<Camera>();
         projectionEffect = GetComponent<PanoramaProjectionEffect>();
-        layerManager = GetComponent<PanoramaLayerManager>();
 
         if (brushShader == null) brushShader = Shader.Find("Sprites/Default");
         if (eraserShader == null) eraserShader = Shader.Find("Hidden/PanoramaEraser");
@@ -145,14 +149,40 @@ public class PanoramaPaintGPU : MonoBehaviour
 
     void OnDestroy()
     {
+        CleanupList(undoHistory);
+        CleanupList(redoHistory);
+        if (overlayTexture != null) overlayTexture.Release();
         if (displayTexture != null) displayTexture.Release();
         if (linePreviewRT != null) linePreviewRT.Release();
         // Reset cursor on exit
         Cursor.SetCursor(null, Vector2.zero, CursorMode.Auto);
     }
 
+    void CleanupList(List<RenderTexture> list)
+    {
+        foreach (var rt in list) if (rt != null) { rt.Release(); Destroy(rt); }
+        list.Clear();
+    }
+
     void InitializeGPUResources()
     {
+        if (projectionEffect.panoramaTexture == null) return;
+        Texture source = projectionEffect.panoramaTexture;
+
+        // Paint canvas
+        if (overlayTexture != null) overlayTexture.Release();
+        overlayTexture = new RenderTexture(source.width, source.height, 0, RenderTextureFormat.ARGB32);
+        overlayTexture.enableRandomWrite = true;
+        overlayTexture.Create();
+        ClearRenderTexture(overlayTexture);
+
+        // Composite display
+        if (displayTexture != null) displayTexture.Release();
+        displayTexture = new RenderTexture(source.width, source.height, 0, RenderTextureFormat.ARGB32);
+        displayTexture.Create();
+
+        projectionEffect.overlayTexture = displayTexture;
+
         if (sphereBrushShader != null)
         {
             sphereBrushMat = new Material(sphereBrushShader);
@@ -172,14 +202,13 @@ public class PanoramaPaintGPU : MonoBehaviour
         {
             gridCompositeMat = new Material(gridCompositeShader);
         }
+    }
 
-        // Create display texture for grid composite
-        if (projectionEffect.panoramaTexture != null)
-        {
-            Texture source = projectionEffect.panoramaTexture;
-            displayTexture = new RenderTexture(source.width, source.height, 0, RenderTextureFormat.ARGB32);
-            displayTexture.Create();
-        }
+    void ClearRenderTexture(RenderTexture rt)
+    {
+        RenderTexture.active = rt;
+        GL.Clear(true, true, Color.clear);
+        RenderTexture.active = null;
     }
 
     void Update()
@@ -202,20 +231,6 @@ public class PanoramaPaintGPU : MonoBehaviour
             wasEraser = isEraser;
         }
         // ---------------------------
-
-        // Check if grid settings changed
-        if (HasGridSettingsChanged())
-        {
-            if (layerManager != null) layerManager.compositionDirty = true;
-        }
-
-        if (targetTexture == null && !allowCameraMovement)
-        {
-            projectionEffect.HideCursor();
-            // Ensure default cursor when not painting
-            Cursor.SetCursor(null, Vector2.zero, CursorMode.Auto); 
-            return;
-        }
 
         // Cursor logic (Projected Brush Preview)
         Vector2 screenPos = Input.mousePosition;
@@ -240,7 +255,6 @@ public class PanoramaPaintGPU : MonoBehaviour
             if (lockedAxis != -1)
             {
                 isSnappingActive = true;
-                if (layerManager != null) layerManager.compositionDirty = true;
             }
         }
         else
@@ -249,19 +263,18 @@ public class PanoramaPaintGPU : MonoBehaviour
             if (lockedAxis != -1)
             {
                 lockedAxis = -1;
-                if (layerManager != null) layerManager.compositionDirty = true;
             }
         }
 
         Vector2 currentCursorUV = SphereVectorToUV(currentP3D);
         
         // Drawing the 3D projected brush ring
-        if (GUIUtility.hotControl == 0 && targetTexture != null)
+        if (GUIUtility.hotControl == 0 && overlayTexture != null)
         {
             float currentSize = isEraser ? eraserSize : brushSize;
             Color cursorCol = isEraser ? Color.black : new Color(drawColor.r, drawColor.g, drawColor.b, 1.0f);
             float effectiveSize = GetEffectiveBrushSize(currentSize);
-            float radiusUV = (effectiveSize / targetTexture.height) * 0.5f;
+            float radiusUV = (effectiveSize / overlayTexture.height) * 0.5f;
             projectionEffect.UpdateCursor(currentCursorUV, radiusUV, cursorCol);
             
             // Re-enforce hardware cursor in case UI overrode it
@@ -273,11 +286,15 @@ public class PanoramaPaintGPU : MonoBehaviour
             Cursor.SetCursor(null, Vector2.zero, CursorMode.Auto);
         }
 
-        if (GUIUtility.hotControl != 0) return;
+        if (GUIUtility.hotControl != 0)
+        {
+            UpdateGridDisplay();
+            return;
+        }
 
         if (Input.GetMouseButtonDown(0)) lastMousePos = Input.mousePosition;
 
-        bool isNavigation = (isSpace && isClick) || (isClick && targetTexture == null && allowCameraMovement);
+        bool isNavigation = isSpace && isClick;
 
         if (isNavigation)
         {
@@ -307,12 +324,13 @@ public class PanoramaPaintGPU : MonoBehaviour
             }
             lastUvPos = null;
         }
-        else if (isPainting && targetTexture != null)
+        else if (isPainting)
         {
             if (!strokeInProgress)
             {
-                if (layerManager != null) layerManager.SaveActiveLayerState();
+                SaveUndoState();
                 strokeInProgress = true;
+                CleanupList(redoHistory);
             }
 
             // Line tool mode with Alt
@@ -340,19 +358,19 @@ public class PanoramaPaintGPU : MonoBehaviour
                     lineStartUV = SphereVectorToUV(lineStartP3D);
                     // ------------------------
                     
-                    if (linePreviewRT == null || linePreviewRT.width != targetTexture.width || linePreviewRT.height != targetTexture.height)
+                    if (linePreviewRT == null || linePreviewRT.width != overlayTexture.width || linePreviewRT.height != overlayTexture.height)
                     {
                         if (linePreviewRT != null) linePreviewRT.Release();
-                        linePreviewRT = new RenderTexture(targetTexture.width, targetTexture.height, 0, RenderTextureFormat.ARGB32);
+                        linePreviewRT = new RenderTexture(overlayTexture.width, overlayTexture.height, 0, RenderTextureFormat.ARGB32);
                         linePreviewRT.Create();
                     }
-                    Graphics.Blit(targetTexture, linePreviewRT);
+                    Graphics.Blit(overlayTexture, linePreviewRT);
                 }
                 
                 // Show preview while dragging
                 if (lineToolActive)
                 {
-                    Graphics.Blit(linePreviewRT, targetTexture);
+                    Graphics.Blit(linePreviewRT, overlayTexture);
                     
                     Vector3 endP3D = currentP3D;
                     
@@ -370,7 +388,6 @@ public class PanoramaPaintGPU : MonoBehaviour
                     }
 
                     DrawLineStraight(lineStartP3D, endP3D);
-                    if (layerManager != null) layerManager.compositionDirty = true;
                 }
             }
             else
@@ -390,6 +407,50 @@ public class PanoramaPaintGPU : MonoBehaviour
         }
 
         if (isClick) lastMousePos = Input.mousePosition;
+
+        UpdateGridDisplay();
+    }
+
+    // --- Undo / Redo ---
+    void SaveUndoState()
+    {
+        RenderTexture snapshot = new RenderTexture(overlayTexture.descriptor);
+        snapshot.Create();
+        Graphics.CopyTexture(overlayTexture, snapshot);
+        undoHistory.Add(snapshot);
+        if (undoHistory.Count > maxUndoSteps)
+        {
+            RenderTexture old = undoHistory[0];
+            undoHistory.RemoveAt(0);
+            old.Release();
+            Destroy(old);
+        }
+    }
+
+    void PerformUndo()
+    {
+        if (undoHistory.Count == 0) return;
+        RenderTexture redoSnap = new RenderTexture(overlayTexture.descriptor);
+        Graphics.CopyTexture(overlayTexture, redoSnap);
+        redoHistory.Add(redoSnap);
+        RenderTexture last = undoHistory[undoHistory.Count - 1];
+        Graphics.CopyTexture(last, overlayTexture);
+        undoHistory.RemoveAt(undoHistory.Count - 1);
+        last.Release();
+        Destroy(last);
+    }
+
+    void PerformRedo()
+    {
+        if (redoHistory.Count == 0) return;
+        RenderTexture undoSnap = new RenderTexture(overlayTexture.descriptor);
+        Graphics.CopyTexture(overlayTexture, undoSnap);
+        undoHistory.Add(undoSnap);
+        RenderTexture last = redoHistory[redoHistory.Count - 1];
+        Graphics.CopyTexture(last, overlayTexture);
+        redoHistory.RemoveAt(redoHistory.Count - 1);
+        last.Release();
+        Destroy(last);
     }
 
     // --- NEW: Hardware Cursor Logic ---
@@ -528,7 +589,6 @@ public class PanoramaPaintGPU : MonoBehaviour
         {
             if (isShift) gridRotation = cam.transform.eulerAngles;
             else showGrid = !showGrid;
-            if (layerManager != null) layerManager.compositionDirty = true;
         }
 
         if (Input.GetKeyDown(KeyCode.S) && !isCtrl)
@@ -539,16 +599,12 @@ public class PanoramaPaintGPU : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.F))
         {
             useDiagonalSnapping = !useDiagonalSnapping;
-            if (layerManager != null) layerManager.compositionDirty = true; // Update grid visual
         }
 
         if (Input.GetKeyDown(KeyCode.Z) && isCtrl)
         {
-            if (layerManager != null)
-            {
-                if (isShift) layerManager.RedoActiveLayer();
-                else layerManager.UndoActiveLayer();
-            }
+            if (isShift) PerformRedo();
+            else PerformUndo();
         }
     }
 
@@ -569,17 +625,9 @@ public class PanoramaPaintGPU : MonoBehaviour
         return changed;
     }
 
-    public void UpdateGridDisplay(RenderTexture sourceComposite)
+    void UpdateGridDisplay()
     {
-        if (gridCompositeMat == null || sourceComposite == null) return;
-
-        // Ensure display texture matches source dimensions
-        if (displayTexture == null || displayTexture.width != sourceComposite.width || displayTexture.height != sourceComposite.height)
-        {
-            if (displayTexture != null) displayTexture.Release();
-            displayTexture = new RenderTexture(sourceComposite.width, sourceComposite.height, 0, RenderTextureFormat.ARGB32);
-            displayTexture.Create();
-        }
+        if (gridCompositeMat == null || overlayTexture == null || displayTexture == null) return;
 
         gridCompositeMat.SetFloat("_UseGrid", showGrid ? 1.0f : 0.0f);
         // Pass diagonal mode to shader
@@ -601,23 +649,23 @@ public class PanoramaPaintGPU : MonoBehaviour
             gridCompositeMat.SetVector("_GhostNormal", Vector4.zero);
         }
 
-        if (showGrid || enableSnapping)
-        {
-            gridCompositeMat.SetColor("_ColorX", gridColorX);
-            gridCompositeMat.SetColor("_ColorY", gridColorY);
-            gridCompositeMat.SetColor("_ColorZ", gridColorZ);
-            gridCompositeMat.SetFloat("_Spacing", gridSpacing);
-            gridCompositeMat.SetFloat("_Thickness", gridThickness);
-            gridCompositeMat.SetFloat("_Opacity", gridOpacity);
+        // Always upload — markers and ghost line need rotation matrix even when grid is hidden
+        gridCompositeMat.SetColor("_ColorX", gridColorX);
+        gridCompositeMat.SetColor("_ColorY", gridColorY);
+        gridCompositeMat.SetColor("_ColorZ", gridColorZ);
+        gridCompositeMat.SetFloat("_Spacing", gridSpacing);
+        gridCompositeMat.SetFloat("_Thickness", gridThickness);
+        gridCompositeMat.SetFloat("_Opacity", gridOpacity);
 
-            Matrix4x4 m = Matrix4x4.Rotate(Quaternion.Euler(gridRotation));
-            gridCompositeMat.SetVector("_Rot0", m.GetRow(0));
-            gridCompositeMat.SetVector("_Rot1", m.GetRow(1));
-            gridCompositeMat.SetVector("_Rot2", m.GetRow(2));
-        }
+        Matrix4x4 m = Matrix4x4.Rotate(Quaternion.Euler(gridRotation));
+        gridCompositeMat.SetVector("_Rot0", m.GetRow(0));
+        gridCompositeMat.SetVector("_Rot1", m.GetRow(1));
+        gridCompositeMat.SetVector("_Rot2", m.GetRow(2));
 
-        Graphics.Blit(sourceComposite, displayTexture, gridCompositeMat);
-        projectionEffect.overlayTexture = displayTexture;
+        Graphics.Blit(overlayTexture, displayTexture, gridCompositeMat);
+
+        if (projectionEffect.overlayTexture != displayTexture)
+            projectionEffect.overlayTexture = displayTexture;
     }
 
     // --- UPDATED PERSPECTIVE RULER WITH DIAGONAL SUPPORT ---
@@ -739,7 +787,7 @@ public class PanoramaPaintGPU : MonoBehaviour
     public void SavePanorama()
     {
         Texture source = projectionEffect.panoramaTexture;
-        if (source == null || targetTexture == null) return;
+        if (source == null || overlayTexture == null) return;
         string timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
         string defaultName = $"Panorama_{timestamp}.jpg";
         string path = SimpleFileBrowser.SaveFile("Save Panorama", defaultName, "jpg");
@@ -750,7 +798,7 @@ public class PanoramaPaintGPU : MonoBehaviour
         Graphics.Blit(source, bakedRT);
         Material compositor = new Material(Shader.Find("Sprites/Default"));
 
-        Graphics.Blit(targetTexture, bakedRT, compositor);
+        Graphics.Blit(overlayTexture, bakedRT, compositor);
 
         Texture2D resultTex = new Texture2D(source.width, source.height, TextureFormat.RGB24, false);
         RenderTexture.active = bakedRT;
@@ -777,26 +825,36 @@ public class PanoramaPaintGPU : MonoBehaviour
 
         if (File.Exists(path))
         {
+            float keptPerspective = projectionEffect.perspective;
+            float keptFisheye = projectionEffect.fisheyePerspective;
+            Quaternion keptRotation = transform.rotation;
+
             byte[] bytes = File.ReadAllBytes(path);
             Texture2D newPano = new Texture2D(2, 2);
             if (newPano.LoadImage(bytes))
             {
                 projectionEffect.panoramaTexture = newPano;
                 InitializeGPUResources();
+                CleanupList(undoHistory);
+                CleanupList(redoHistory);
             }
+
+            projectionEffect.perspective = keptPerspective;
+            projectionEffect.fisheyePerspective = keptFisheye;
+            transform.rotation = keptRotation;
         }
     }
     
     // --- REFACTORED PAINT STROKE (Unified 3D Shader Logic) ---
     void PaintStroke(Vector2 startUV, Vector2 endUV)
     {
-        if (targetTexture == null) return;
+        if (overlayTexture == null) return;
         
         // 1. Select correct material
         Material currentMat = isEraser ? eraserMaterial : sphereBrushMat;
         if (currentMat == null) return;
 
-        RenderTexture.active = targetTexture;
+        RenderTexture.active = overlayTexture;
         GL.PushMatrix();
         GL.LoadOrtho();
 
@@ -804,7 +862,7 @@ public class PanoramaPaintGPU : MonoBehaviour
         float currentSize = isEraser ? eraserSize : brushSize;
         float effectiveSize = GetEffectiveBrushSize(currentSize);
         // Radius in UV height units (0..0.5)
-        float radiusUV = (effectiveSize / targetTexture.height) * 0.5f; 
+        float radiusUV = (effectiveSize / overlayTexture.height) * 0.5f; 
         
         // Convert Radius to Radians for the shader
         float radiusRad = radiusUV * Mathf.PI;
@@ -894,20 +952,20 @@ public class PanoramaPaintGPU : MonoBehaviour
     // --- REFACTORED LINE TOOL (Unified 3D Shader Logic) ---
     void DrawLineStraight(Vector3 startP3D, Vector3 endP3D)
     {
-        if (targetTexture == null) return;
+        if (overlayTexture == null) return;
 
         // 1. Select correct material
         Material currentMat = isEraser ? eraserMaterial : sphereBrushMat;
         if (currentMat == null) return;
 
-        RenderTexture.active = targetTexture;
+        RenderTexture.active = overlayTexture;
         GL.PushMatrix();
         GL.LoadOrtho();
 
         // 2. Calculate Brush Size & Spacing
         float currentSize = isEraser ? eraserSize : brushSize;
         float effectiveSize = GetEffectiveBrushSize(currentSize);
-        float radiusUV = (effectiveSize / targetTexture.height) * 0.5f;
+        float radiusUV = (effectiveSize / overlayTexture.height) * 0.5f;
         float radiusRad = radiusUV * Mathf.PI;
         
         float stepSize = Mathf.Max(0.0001f, (radiusUV * 2.0f) * brushSpacing);
@@ -999,6 +1057,7 @@ public class PanoramaPaintGPU : MonoBehaviour
         brushTexture.SetPixels(colors);
         brushTexture.Apply();
     }
+
     public float GetEffectiveBrushSize(float baseSize)
     {
         if (!useSmartBrush || projectionEffect == null) return baseSize;

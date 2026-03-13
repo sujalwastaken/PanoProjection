@@ -217,7 +217,7 @@ Shader "Hidden/PanoramaGridComposite"
                 // Preserving Paint's Alpha Channel
                 float3 resultColor = lerp(paint.rgb, finalComposite.rgb, finalComposite.a);
                 
-                return fixed4(resultColor, paint.a);
+                return fixed4(resultColor, max(paint.a, finalComposite.a));
             }
             ENDCG
         }
