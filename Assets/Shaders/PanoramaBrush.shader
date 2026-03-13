@@ -6,6 +6,7 @@ Shader "Hidden/PanoramaBrush"
         _BrushCenter ("Brush Center (UV)", Vector) = (0,0,0,0)
         _BrushRadius ("Brush Radius (Radians)", Float) = 0.1
         _Hardness ("Hardness", Range(0,1)) = 0.8
+        _Opacity ("Opacity", Range(0,1)) = 1.0
     }
     SubShader
     {
@@ -35,6 +36,7 @@ Shader "Hidden/PanoramaBrush"
             float4 _BrushCenter; // xy = UV center
             float _BrushRadius;  // in Radians
             float _Hardness;
+            float _Opacity;
 
             #define PI 3.14159265359
 
@@ -75,7 +77,7 @@ Shader "Hidden/PanoramaBrush"
                 // If hardness = 0.0, alpha linear fade from center.
                 float alpha = 1.0 - smoothstep(_Hardness, 1.0, t);
 
-                return float4(_Color.rgb, _Color.a * alpha);
+                return float4(_Color.rgb, _Color.a * alpha * _Opacity);
             }
             ENDCG
         }

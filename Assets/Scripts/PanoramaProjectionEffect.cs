@@ -22,6 +22,10 @@ public class PanoramaProjectionEffect : MonoBehaviour
     [Range(1f, 179f)] public float minFov = 30f;
     [Range(1f, 179f)] public float maxFov = 160f;
 
+    [Header("Visual Effects")]
+    [Range(0f, 1f)] public float vignetteIntensity = 0.3f;
+    public bool showCrosshair = false;
+
     // These are hidden from the default inspector so we can draw them manually as Read-Only
     [HideInInspector] public float calculatedVerticalFOV;
     [HideInInspector] public float calculatedHorizontalFOV;
@@ -43,6 +47,10 @@ public class PanoramaProjectionEffect : MonoBehaviour
     private static readonly int CursorUVId = Shader.PropertyToID("_CursorUV");
     private static readonly int CursorRadiusId = Shader.PropertyToID("_CursorRadius");
     private static readonly int CursorColorId = Shader.PropertyToID("_CursorColor");
+
+    // Visual Effects
+    private static readonly int VignetteIntensityId = Shader.PropertyToID("_VignetteIntensity");
+    private static readonly int ShowCrosshairId = Shader.PropertyToID("_ShowCrosshair");
 
     void OnEnable()
     {
@@ -95,6 +103,10 @@ public class PanoramaProjectionEffect : MonoBehaviour
         float max = Mathf.Max(minFov, maxFov);
         panoramaMaterial.SetFloat(MinFovId, min);
         panoramaMaterial.SetFloat(MaxFovId, max);
+
+        // Visual Effects
+        panoramaMaterial.SetFloat(VignetteIntensityId, vignetteIntensity);
+        panoramaMaterial.SetFloat(ShowCrosshairId, showCrosshair ? 1.0f : 0.0f);
 
         if (cam != null)
         {

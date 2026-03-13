@@ -62,6 +62,7 @@ public class PanoramaPaintGPU : MonoBehaviour
     [Range(1, 200)] public float eraserSize = 100.0f;
     [Range(0.01f, 0.5f)] public float brushSpacing = 0.05f;
     [Range(0.0f, 1.0f)] public float hardness = 0.8f;
+    [Range(0.0f, 1.0f)] public float brushOpacity = 1.0f;
 
     [Tooltip("Scales brush size with FOV to keep line width consistent on screen.")]
     public bool useSmartBrush = false; 
@@ -71,7 +72,13 @@ public class PanoramaPaintGPU : MonoBehaviour
     [Range(1, 20)] public int maxUndoSteps = 10;
 
     [HideInInspector] public bool isEraser = false;
+    [HideInInspector] public bool isEyedropper = false;
     private bool wasEraser = false; // To track state changes
+
+    // Color history
+    [HideInInspector] public List<Color> recentColors = new List<Color>();
+    [HideInInspector] public int maxRecentColors = 12;
+    private Color lastStrokeColor;
 
     private Camera cam;
     private PanoramaProjectionEffect projectionEffect;
@@ -239,7 +246,8 @@ public class PanoramaPaintGPU : MonoBehaviour
 
         bool isSpace = Input.GetKey(KeyCode.Space);
         bool isClick = Input.GetMouseButton(0);
-        bool isPainting = isClick && !isSpace && !isCtrl;
+        bool isMMB = Input.GetMouseButton(2); // Middle mouse button (Blender style)
+        bool isPainting = isClick && !isSpace && !isCtrl && !isEyedropper;
 
         // Snapping logic
         bool shouldSnap = enableSnapping || isShift;
@@ -292,9 +300,10 @@ public class PanoramaPaintGPU : MonoBehaviour
             return;
         }
 
-        if (Input.GetMouseButtonDown(0)) lastMousePos = Input.mousePosition;
+        if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(2)) lastMousePos = Input.mousePosition;
 
-        bool isNavigation = isSpace && isClick;
+        // Blender-style: MMB = orbit, or Space+LMB = orbit (fallback)
+        bool isNavigation = isMMB || (isSpace && isClick);
 
         if (isNavigation)
         {
@@ -398,15 +407,27 @@ public class PanoramaPaintGPU : MonoBehaviour
                 lastUvPos = currentCursorUV;
             }
         }
+        else if (isEyedropper && isClick)
+        {
+            // Eyedropper: sample color from panorama at current UV
+            SampleColorAtUV(currentCursorUV);
+            isEyedropper = false;
+            isEraser = false;
+        }
         else
         {
             // Mouse released
             lineToolActive = false;
             lastUvPos = null;
+            if (strokeInProgress)
+            {
+                // Track color history when stroke ends
+                AddToColorHistory(drawColor);
+            }
             strokeInProgress = false;
         }
 
-        if (isClick) lastMousePos = Input.mousePosition;
+        if (isClick || isMMB) lastMousePos = Input.mousePosition;
 
         UpdateGridDisplay();
     }
@@ -469,112 +490,30 @@ public class PanoramaPaintGPU : MonoBehaviour
         }
     }
 
-    // --- NEW: Procedurally Generate the Triangle Cursor ---
     Texture2D GenerateTriangleCursor()
     {
-        int size = 32;
-        Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
-        tex.filterMode = FilterMode.Point; // Keep it sharp
-        Color[] colors = new Color[size * size];
-
-        // Initialize transparent
-        for (int i = 0; i < colors.Length; i++) colors[i] = Color.clear;
-
-        // Draw Triangle Arrow
-        // The image is a sharp arrow pointing to Top-Left.
-        // In Unity Texture2D (0,0) is Bottom-Left. 
-        // We want the tip at (0, size-1) effectively.
-        
-        for (int y = 0; y < size; y++)
-        {
-            for (int x = 0; x < size; x++)
-            {
-                // Invert Y for drawing logic (0 is top)
-                int drawY = size - 1 - y;
-
-                // Simple inequality for a right-angled looking arrow
-                // x < y means we are below the diagonal
-                // x < 10 width
-                // y < 15 height
-                // This creates a basic arrowhead shape
-                
-                // Logic: Draw pixels if they are inside the "arrow" shape
-                // Main diagonal slope: x == drawY (This is the diagonal spine)
-                // Bottom slope: drawY == x * 2 (steeper)
-                
-                bool inside = false;
-                
-                // Coordinates relative to Top-Left
-                float u = x;
-                float v = drawY;
-
-                // Define the 3 corners of the arrow
-                // Tip: (0,0)
-                // Right: (18, 10)
-                // Bottom: (10, 18)
-                // Inner: (10, 10) - concave part
-
-                // Check using barycentric coordinates or simple slope logic
-                // Simplified: Is it within the main arrow wedge?
-                if (u >= 0 && v >= 0)
-                {
-                    // 1. Extend Bounds (was 14 -> 18) to allow a longer, sharper tip
-                    if (u < 18 && v < 18)
-                    {
-                        // 2. Increase Slope (was 0.5 -> 0.7) to make it narrower
-                        if (v >= u * 0.7f)
-                        {
-                            if (u >= v * 0.7f)
-                            {
-                                // 3. Adjust Cutoff (was 22 -> 28) for the new length
-                                if (u + v < 25) 
-                                {
-                                     inside = true;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (inside)
-                {
-                    colors[y * size + x] = Color.black;
-                }
+        int s = 32;
+        Texture2D tex = new Texture2D(s, s, TextureFormat.RGBA32, false);
+        tex.filterMode = FilterMode.Point;
+        Color[] c = new Color[s * s];
+        for (int i = 0; i < c.Length; i++) c[i] = Color.clear;
+        for (int y = 0; y < s; y++)
+            for (int x = 0; x < s; x++) {
+                float u = x, v = s - 1 - y;
+                if (u < 18 && v < 18 && v >= u * 0.7f && u >= v * 0.7f && u + v < 25)
+                    c[y * s + x] = Color.black;
             }
-        }
-        
-        // Add a 1px white border around the black pixels for contrast
-        Color[] borderedColors = (Color[])colors.Clone();
-        for (int y = 1; y < size - 1; y++)
-        {
-            for (int x = 1; x < size - 1; x++)
-            {
-                int idx = y * size + x;
-                if (colors[idx].a > 0.9f) // If current is black
-                {
-                    // Check neighbors, if transparent, make them white in the new array
-                    SetBorderPixel(x+1, y, size, borderedColors);
-                    SetBorderPixel(x-1, y, size, borderedColors);
-                    SetBorderPixel(x, y+1, size, borderedColors);
-                    SetBorderPixel(x, y-1, size, borderedColors);
-                }
-            }
-        }
-
-        // Apply black over white
-        for(int i=0; i<colors.Length; i++) {
-            if (colors[i].a > 0) borderedColors[i] = colors[i];
-        }
-
-        tex.SetPixels(borderedColors);
+        // White border
+        Color[] bc = (Color[])c.Clone();
+        for (int y = 1; y < s - 1; y++)
+            for (int x = 1; x < s - 1; x++)
+                if (c[y*s+x].a > 0.9f)
+                    foreach (var d in new[]{(1,0),(-1,0),(0,1),(0,-1)})
+                        if (bc[(y+d.Item2)*s+(x+d.Item1)].a == 0) bc[(y+d.Item2)*s+(x+d.Item1)] = Color.white;
+        for (int i = 0; i < c.Length; i++) if (c[i].a > 0) bc[i] = c[i];
+        tex.SetPixels(bc);
         tex.Apply();
         return tex;
-    }
-
-    void SetBorderPixel(int x, int y, int size, Color[] cols)
-    {
-        int idx = y * size + x;
-        if (cols[idx].a == 0) cols[idx] = Color.white;
     }
 
     void HandleToolInput()
@@ -582,8 +521,9 @@ public class PanoramaPaintGPU : MonoBehaviour
         bool isCtrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
         bool isShift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
-        if (Input.GetKeyDown(KeyCode.B) || Input.GetKeyDown(KeyCode.P) || Input.GetKeyDown(KeyCode.Q)) isEraser = false;
-        if (Input.GetKeyDown(KeyCode.E)) isEraser = true;
+        if (Input.GetKeyDown(KeyCode.B) || Input.GetKeyDown(KeyCode.P) || Input.GetKeyDown(KeyCode.Q)) { isEraser = false; isEyedropper = false; }
+        if (Input.GetKeyDown(KeyCode.E)) { isEraser = true; isEyedropper = false; }
+        if (Input.GetKeyDown(KeyCode.I)) { isEyedropper = true; isEraser = false; }
 
         if (Input.GetKeyDown(KeyCode.G))
         {
@@ -606,6 +546,92 @@ public class PanoramaPaintGPU : MonoBehaviour
             if (isShift) PerformRedo();
             else PerformUndo();
         }
+
+        // --- NUMPAD VIEW PRESETS (Blender-style) ---
+        if (Input.GetKeyDown(KeyCode.Keypad1) || Input.GetKeyDown(KeyCode.Alpha1) && isCtrl)
+        {
+            SetView(0, 0, 0); // Front
+        }
+        if (Input.GetKeyDown(KeyCode.Keypad3) || Input.GetKeyDown(KeyCode.Alpha3) && isCtrl)
+        {
+            SetView(0, 90, 0); // Right
+        }
+        if (Input.GetKeyDown(KeyCode.Keypad7) || Input.GetKeyDown(KeyCode.Alpha7) && isCtrl)
+        {
+            SetView(90, 0, 0); // Top
+        }
+        if (Input.GetKeyDown(KeyCode.Keypad5))
+        {
+            ResetView(); // Full reset
+        }
+        if (Input.GetKeyDown(KeyCode.Home))
+        {
+            ResetView();
+        }
+    }
+
+    // --- VIEW PRESETS ---
+    public void SetView(float pitch, float yaw, float roll)
+    {
+        camPitch = pitch;
+        camYaw = yaw;
+        camRoll = roll;
+        ApplyRotation();
+    }
+
+    public void ResetView()
+    {
+        camPitch = 0;
+        camYaw = 0;
+        camRoll = 0;
+        projectionEffect.perspective = 50f;
+        ApplyRotation();
+    }
+
+    // --- EYEDROPPER ---
+    void SampleColorAtUV(Vector2 uv)
+    {
+        Texture source = projectionEffect.panoramaTexture;
+        if (source == null) return;
+
+        // Read from the panorama texture
+        if (source is Texture2D tex2D)
+        {
+            int px = Mathf.Clamp(Mathf.FloorToInt(uv.x * tex2D.width), 0, tex2D.width - 1);
+            int py = Mathf.Clamp(Mathf.FloorToInt((1f - uv.y) * tex2D.height), 0, tex2D.height - 1);
+            drawColor = tex2D.GetPixel(px, py);
+            drawColor.a = 1f;
+            AddToColorHistory(drawColor);
+        }
+        else if (source is RenderTexture rt)
+        {
+            RenderTexture.active = rt;
+            Texture2D tmp = new Texture2D(1, 1, TextureFormat.RGB24, false);
+            int px = Mathf.Clamp(Mathf.FloorToInt(uv.x * rt.width), 0, rt.width - 1);
+            int py = Mathf.Clamp(Mathf.FloorToInt((1f - uv.y) * rt.height), 0, rt.height - 1);
+            tmp.ReadPixels(new Rect(px, py, 1, 1), 0, 0);
+            tmp.Apply();
+            drawColor = tmp.GetPixel(0, 0);
+            drawColor.a = 1f;
+            RenderTexture.active = null;
+            Destroy(tmp);
+            AddToColorHistory(drawColor);
+        }
+    }
+
+    // --- COLOR HISTORY ---
+    void AddToColorHistory(Color col)
+    {
+        // Don't add duplicates of the most recent
+        if (recentColors.Count > 0)
+        {
+            Color last = recentColors[0];
+            if (Mathf.Abs(last.r - col.r) < 0.01f && Mathf.Abs(last.g - col.g) < 0.01f && Mathf.Abs(last.b - col.b) < 0.01f)
+                return;
+        }
+        recentColors.Insert(0, col);
+        if (recentColors.Count > maxRecentColors)
+            recentColors.RemoveAt(recentColors.Count - 1);
     }
 
     bool HasGridSettingsChanged()
@@ -845,193 +871,94 @@ public class PanoramaPaintGPU : MonoBehaviour
         }
     }
     
-    // --- REFACTORED PAINT STROKE (Unified 3D Shader Logic) ---
+    // Shared bounding box drawing (used by PaintStroke and DrawLineStraight)
+    void DrawBrushQuad(Vector2 uv, float radiusUV)
+    {
+        float lat = (uv.y - 0.5f) * Mathf.PI;
+        float yMin = uv.y - radiusUV, yMax = uv.y + radiusUV;
+        if (Mathf.Abs(lat) > 1.2f) {
+            DrawQuad(0, 1, yMin, yMax);
+        } else {
+            float xR = radiusUV * 0.5f / Mathf.Cos(lat);
+            float xMin = uv.x - xR, xMax = uv.x + xR;
+            DrawQuad(xMin, xMax, yMin, yMax);
+            if (xMin < 0) DrawQuad(xMin+1, xMax+1, yMin, yMax);
+            else if (xMax > 1) DrawQuad(xMin-1, xMax-1, yMin, yMax);
+        }
+    }
+
+    void DrawQuad(float x0, float x1, float y0, float y1)
+    {
+        GL.Begin(GL.QUADS);
+        GL.TexCoord2(x0,y0); GL.Vertex3(x0,y0,0);
+        GL.TexCoord2(x0,y1); GL.Vertex3(x0,y1,0);
+        GL.TexCoord2(x1,y1); GL.Vertex3(x1,y1,0);
+        GL.TexCoord2(x1,y0); GL.Vertex3(x1,y0,0);
+        GL.End();
+    }
+
+    Material SetupBrushMaterial(out float radiusUV)
+    {
+        Material mat = isEraser ? eraserMaterial : sphereBrushMat;
+        float effective = GetEffectiveBrushSize(isEraser ? eraserSize : brushSize);
+        radiusUV = (effective / overlayTexture.height) * 0.5f;
+        mat.SetColor("_Color", drawColor);
+        mat.SetFloat("_Hardness", hardness);
+        mat.SetFloat("_BrushRadius", radiusUV * Mathf.PI);
+        if (!isEraser) mat.SetFloat("_Opacity", brushOpacity);
+        return mat;
+    }
+
     void PaintStroke(Vector2 startUV, Vector2 endUV)
     {
         if (overlayTexture == null) return;
-        
-        // 1. Select correct material
-        Material currentMat = isEraser ? eraserMaterial : sphereBrushMat;
-        if (currentMat == null) return;
+        float radiusUV;
+        Material mat = SetupBrushMaterial(out radiusUV);
+        if (mat == null) return;
 
         RenderTexture.active = overlayTexture;
-        GL.PushMatrix();
-        GL.LoadOrtho();
+        GL.PushMatrix(); GL.LoadOrtho();
 
-        // 2. Calculate Brush Size & Spacing
-        float currentSize = isEraser ? eraserSize : brushSize;
-        float effectiveSize = GetEffectiveBrushSize(currentSize);
-        // Radius in UV height units (0..0.5)
-        float radiusUV = (effectiveSize / overlayTexture.height) * 0.5f; 
-        
-        // Convert Radius to Radians for the shader
-        float radiusRad = radiusUV * Mathf.PI;
-
-        // --- Set shared material properties once ---
-        // Eraser shader ignores color, but we set it anyway for simplicity
-        currentMat.SetColor("_Color", drawColor);
-        currentMat.SetFloat("_Hardness", hardness);
-        currentMat.SetFloat("_BrushRadius", radiusRad);
-        // -------------------------------------------
-
-        // 3. Path Calculation & Interpolation loop
         float dx = endUV.x - startUV.x;
-        if (dx > 0.5f) endUV.x -= 1.0f;
-        else if (dx < -0.5f) endUV.x += 1.0f;
-
-        float distance = Vector2.Distance(startUV, endUV);
-        // Use diameter for spacing to ensure overlaps fill gaps
-        float stepSize = Mathf.Max(0.0001f, (radiusUV * 2.0f) * brushSpacing);
-        
-        int steps = Mathf.CeilToInt(distance / stepSize);
-        if (steps <= 0) steps = 1;
+        if (dx > 0.5f) endUV.x -= 1f; else if (dx < -0.5f) endUV.x += 1f;
+        float dist = Vector2.Distance(startUV, endUV);
+        float step = Mathf.Max(0.0001f, radiusUV * 2f * brushSpacing);
+        int steps = Mathf.Max(1, Mathf.CeilToInt(dist / step));
 
         for (int i = 0; i <= steps; i++)
         {
-            float t = (float)i / steps;
-            Vector2 pos = Vector2.Lerp(startUV, endUV, t);
-            // Normalize X wrap for shading
-            pos.x = Mathf.Repeat(pos.x, 1.0f);
-
-            // Update center position and apply pass
-            currentMat.SetVector("_BrushCenter", new Vector4(pos.x, pos.y, 0, 0));
-            currentMat.SetPass(0); 
-
-            // --- Draw Latitude-Compensated Bounding Box ---
-            // This draws a quad just big enough to contain the sphere circle,
-            // accounting for distortion at poles.
-            float lat = (pos.y - 0.5f) * Mathf.PI; 
-            float yMin = pos.y - radiusUV;
-            float yMax = pos.y + radiusUV;
-
-            // If near pole (abs(lat) > ~68 deg), draw full width strip to be safe
-            if (Mathf.Abs(lat) > 1.2f) {
-                GL.Begin(GL.QUADS);
-                GL.TexCoord2(0, yMin); GL.Vertex3(0, yMin, 0);
-                GL.TexCoord2(0, yMax); GL.Vertex3(0, yMax, 0);
-                GL.TexCoord2(1, yMax); GL.Vertex3(1, yMax, 0);
-                GL.TexCoord2(1, yMin); GL.Vertex3(1, yMin, 0);
-                GL.End();
-            } else {
-                float stretch = 1.0f / Mathf.Cos(lat);
-                // xRadius needs 2:1 aspect correction (0.5f) times stretch
-                float xRadius = radiusUV * stretch * 0.5f; 
-                float xMin = pos.x - xRadius;
-                float xMax = pos.x + xRadius;
-
-                GL.Begin(GL.QUADS);
-                GL.TexCoord2(xMin, yMin); GL.Vertex3(xMin, yMin, 0);
-                GL.TexCoord2(xMin, yMax); GL.Vertex3(xMin, yMax, 0);
-                GL.TexCoord2(xMax, yMax); GL.Vertex3(xMax, yMax, 0);
-                GL.TexCoord2(xMax, yMin); GL.Vertex3(xMax, yMin, 0);
-                GL.End();
-                
-                // Handle wrap-around for the bounding box
-                if (xMin < 0) {
-                    GL.Begin(GL.QUADS);
-                    GL.TexCoord2(xMin+1, yMin); GL.Vertex3(xMin+1, yMin, 0);
-                    GL.TexCoord2(xMin+1, yMax); GL.Vertex3(xMin+1, yMax, 0);
-                    GL.TexCoord2(xMax+1, yMax); GL.Vertex3(xMax+1, yMax, 0);
-                    GL.TexCoord2(xMax+1, yMin); GL.Vertex3(xMax+1, yMin, 0);
-                    GL.End();
-                } else if (xMax > 1) {
-                    GL.Begin(GL.QUADS);
-                    GL.TexCoord2(xMin-1, yMin); GL.Vertex3(xMin-1, yMin, 0);
-                    GL.TexCoord2(xMin-1, yMax); GL.Vertex3(xMin-1, yMax, 0);
-                    GL.TexCoord2(xMax-1, yMax); GL.Vertex3(xMax-1, yMax, 0);
-                    GL.TexCoord2(xMax-1, yMin); GL.Vertex3(xMax-1, yMin, 0);
-                    GL.End();
-                }
-            }
+            Vector2 pos = Vector2.Lerp(startUV, endUV, (float)i / steps);
+            pos.x = Mathf.Repeat(pos.x, 1f);
+            mat.SetVector("_BrushCenter", new Vector4(pos.x, pos.y, 0, 0));
+            mat.SetPass(0);
+            DrawBrushQuad(pos, radiusUV);
         }
 
         GL.PopMatrix();
         RenderTexture.active = null;
     }
 
-    // --- REFACTORED LINE TOOL (Unified 3D Shader Logic) ---
     void DrawLineStraight(Vector3 startP3D, Vector3 endP3D)
     {
         if (overlayTexture == null) return;
-
-        // 1. Select correct material
-        Material currentMat = isEraser ? eraserMaterial : sphereBrushMat;
-        if (currentMat == null) return;
+        float radiusUV;
+        Material mat = SetupBrushMaterial(out radiusUV);
+        if (mat == null) return;
 
         RenderTexture.active = overlayTexture;
-        GL.PushMatrix();
-        GL.LoadOrtho();
+        GL.PushMatrix(); GL.LoadOrtho();
 
-        // 2. Calculate Brush Size & Spacing
-        float currentSize = isEraser ? eraserSize : brushSize;
-        float effectiveSize = GetEffectiveBrushSize(currentSize);
-        float radiusUV = (effectiveSize / overlayTexture.height) * 0.5f;
-        float radiusRad = radiusUV * Mathf.PI;
-        
-        float stepSize = Mathf.Max(0.0001f, (radiusUV * 2.0f) * brushSpacing);
+        float step = Mathf.Max(0.0001f, radiusUV * 2f * brushSpacing);
+        float arc = Mathf.Acos(Mathf.Clamp(Vector3.Dot(startP3D, endP3D), -1f, 1f));
+        int steps = Mathf.Max(1, Mathf.CeilToInt(arc / step));
 
-        // 3. Calculate 3D path
-        float arcLength = Mathf.Acos(Mathf.Clamp(Vector3.Dot(startP3D, endP3D), -1f, 1f));
-        int steps = Mathf.CeilToInt(arcLength / stepSize);
-        if (steps <= 0) steps = 1;
-
-        // --- Set shared material properties once ---
-        currentMat.SetColor("_Color", drawColor);
-        currentMat.SetFloat("_Hardness", hardness);
-        currentMat.SetFloat("_BrushRadius", radiusRad);
-        // -------------------------------------------
-
-        // 4. Interpolation loop
         for (int i = 0; i <= steps; i++)
         {
-            float t = (float)i / steps;
-            // Slerp for straight line on sphere surface
-            Vector3 p3D = Vector3.Slerp(startP3D, endP3D, t).normalized;
-            Vector2 uv = SphereVectorToUV(p3D);
-
-            // Update Center for this stamp
-            currentMat.SetVector("_BrushCenter", new Vector4(uv.x, uv.y, 0, 0));
-            currentMat.SetPass(0);
-
-            // --- Draw Latitude-Compensated Bounding Box (Same logic as PaintStroke) ---
-            float lat = (uv.y - 0.5f) * Mathf.PI;
-            float yMin = uv.y - radiusUV; float yMax = uv.y + radiusUV;
-
-            if (Mathf.Abs(lat) > 1.2f) {
-                GL.Begin(GL.QUADS);
-                GL.TexCoord2(0, yMin); GL.Vertex3(0, yMin, 0);
-                GL.TexCoord2(0, yMax); GL.Vertex3(0, yMax, 0);
-                GL.TexCoord2(1, yMax); GL.Vertex3(1, yMax, 0);
-                GL.TexCoord2(1, yMin); GL.Vertex3(1, yMin, 0);
-                GL.End();
-            } else {
-                float stretch = 1.0f / Mathf.Cos(lat);
-                float xRadius = radiusUV * stretch * 0.5f;
-                float xMin = uv.x - xRadius; float xMax = uv.x + xRadius;
-                
-                GL.Begin(GL.QUADS);
-                GL.TexCoord2(xMin, yMin); GL.Vertex3(xMin, yMin, 0);
-                GL.TexCoord2(xMin, yMax); GL.Vertex3(xMin, yMax, 0);
-                GL.TexCoord2(xMax, yMax); GL.Vertex3(xMax, yMax, 0);
-                GL.TexCoord2(xMax, yMin); GL.Vertex3(xMax, yMin, 0);
-                GL.End();
-
-                if(xMin < 0) {
-                    GL.Begin(GL.QUADS);
-                    GL.TexCoord2(xMin+1,yMin); GL.Vertex3(xMin+1,yMin,0);
-                    GL.TexCoord2(xMin+1,yMax); GL.Vertex3(xMin+1,yMax,0);
-                    GL.TexCoord2(xMax+1,yMax); GL.Vertex3(xMax+1,yMax,0);
-                    GL.TexCoord2(xMax+1,yMin); GL.Vertex3(xMax+1,yMin,0);
-                    GL.End();
-                } else if(xMax > 1) {
-                    GL.Begin(GL.QUADS);
-                    GL.TexCoord2(xMin-1,yMin); GL.Vertex3(xMin-1,yMin,0);
-                    GL.TexCoord2(xMin-1,yMax); GL.Vertex3(xMin-1,yMax,0);
-                    GL.TexCoord2(xMax-1,yMax); GL.Vertex3(xMax-1,yMax,0);
-                    GL.TexCoord2(xMax-1,yMin); GL.Vertex3(xMax-1,yMin,0);
-                    GL.End();
-                }
-            }
+            Vector3 p = Vector3.Slerp(startP3D, endP3D, (float)i / steps).normalized;
+            Vector2 uv = SphereVectorToUV(p);
+            mat.SetVector("_BrushCenter", new Vector4(uv.x, uv.y, 0, 0));
+            mat.SetPass(0);
+            DrawBrushQuad(uv, radiusUV);
         }
 
         GL.PopMatrix();
@@ -1066,5 +993,38 @@ public class PanoramaPaintGPU : MonoBehaviour
         // Uses calculatedVerticalFOV instead of perspective
         float currentFOV = projectionEffect.calculatedVerticalFOV; 
         return baseSize * (currentFOV / REFERENCE_FOV);
+    }
+
+    // --- Clear Canvas ---
+    public void ClearCanvas()
+    {
+        if (overlayTexture == null) return;
+        SaveUndoState();
+        ClearRenderTexture(overlayTexture);
+        CleanupList(redoHistory);
+    }
+
+    // --- Export Overlay as transparent PNG ---
+    public void ExportOverlayAsPNG()
+    {
+        if (overlayTexture == null) return;
+        string timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        string defaultName = $"Overlay_{timestamp}.png";
+        string path = SimpleFileBrowser.SaveFile("Export Overlay", defaultName, "png");
+        if (string.IsNullOrEmpty(path)) return;
+
+        Texture2D resultTex = new Texture2D(overlayTexture.width, overlayTexture.height, TextureFormat.ARGB32, false);
+        RenderTexture.active = overlayTexture;
+        resultTex.ReadPixels(new Rect(0, 0, overlayTexture.width, overlayTexture.height), 0, 0);
+        resultTex.Apply();
+        RenderTexture.active = null;
+
+        byte[] bytes = resultTex.EncodeToPNG();
+        if (!path.ToLower().EndsWith(".png")) path += ".png";
+        File.WriteAllBytes(path, bytes);
+        Destroy(resultTex);
+#if UNITY_EDITOR
+        UnityEditor.AssetDatabase.Refresh();
+#endif
     }
 }

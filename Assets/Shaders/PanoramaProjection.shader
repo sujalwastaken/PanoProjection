@@ -1,4 +1,4 @@
-﻿Shader "Hidden/PanoramaProjection"
+Shader "Hidden/PanoramaProjection"
 {
     Properties
     {
@@ -14,6 +14,12 @@
         _CursorUV ("Cursor Position (UV)", Vector) = (-1,-1,0,0)
         _CursorRadius ("Cursor Radius (Normalized UV)", Float) = 0.05
         _CursorColor ("Cursor Color", Color) = (1,1,1,0.5)
+        
+        // Vignette
+        _VignetteIntensity ("Vignette Intensity", Range(0, 1)) = 0.3
+        
+        // Crosshair
+        _ShowCrosshair ("Show Crosshair", Float) = 0.0
     }
     SubShader
     {
@@ -50,6 +56,9 @@
             float2 _CursorUV;
             float _CursorRadius;
             fixed4 _CursorColor;
+            
+            float _VignetteIntensity;
+            float _ShowCrosshair;
 
             v2f vert(appdata v) {
                 v2f o;
@@ -107,33 +116,59 @@
                 fixed4 drawCol = tex2D(_OverlayTex, panoUV);
                 fixed4 finalCol = lerp(panoCol, drawCol, drawCol.a);
 
-                // --- 3. 3D CURSOR RENDERING (DISTORTION FREE) ---
-                // Convert Cursor UV to 3D World Vector
+                // --- 3. ANIMATED CURSOR (Pulsing, Anti-aliased, Inner Glow) ---
                 float3 cursorDir = UVToDirection(_CursorUV);
-                
-                // Calculate Angle between current pixel ray and cursor center
-                // Dot product gives cos(angle). 
                 float dotVal = dot(normalize(worldRay), normalize(cursorDir));
-                
-                // Convert to actual angle in radians
-                // Clamp dotVal to handle float inaccuracies
                 float angle = acos(clamp(dotVal, -1.0, 1.0));
-                
-                // Convert Radius (which is in UV height units 0..0.5) to Radians (0..PI/2)
-                // _CursorRadius comes from C# as (size / height) * 0.5
-                // Height of map = PI radians.
                 float targetRadiusRad = _CursorRadius * UNITY_PI;
                 
-                // Check if inside the circle
-                if (angle < targetRadiusRad)
+                // Pulse animation: subtle breathing effect
+                float pulse = 0.85 + 0.15 * sin(_Time.y * 3.0);
+                
+                // Anti-aliased ring with smooth edges
+                float ringOuter = targetRadiusRad;
+                float ringInner = targetRadiusRad * 0.88;
+                float edgeSmooth = targetRadiusRad * 0.04; // AA edge width
+                
+                // Outer edge AA
+                float outerMask = 1.0 - smoothstep(ringOuter - edgeSmooth, ringOuter + edgeSmooth, angle);
+                // Inner edge AA
+                float innerMask = smoothstep(ringInner - edgeSmooth, ringInner + edgeSmooth, angle);
+                // Ring = intersection
+                float ringMask = outerMask * innerMask * pulse;
+                
+                // Inner glow: subtle radial gradient inside the circle
+                float glowRadius = targetRadiusRad * 0.85;
+                float glowMask = (1.0 - smoothstep(glowRadius * 0.5, glowRadius, angle)) * 0.08 * pulse;
+                
+                // Combine cursor effects
+                float cursorAlpha = saturate(ringMask * _CursorColor.a + glowMask);
+                float3 cursorRGB = _CursorColor.rgb;
+                finalCol.rgb = lerp(finalCol.rgb, cursorRGB, cursorAlpha);
+
+                // --- 4. VIGNETTE ---
+                float2 vigUV = i.uv - 0.5;
+                float vigDist = length(vigUV) * 1.4142; // normalize so corners = 1
+                float vignette = 1.0 - _VignetteIntensity * smoothstep(0.4, 1.2, vigDist);
+                finalCol.rgb *= vignette;
+                
+                // --- 5. CROSSHAIR AT SCREEN CENTER ---
+                if (_ShowCrosshair > 0.5)
                 {
-                    // Ring Thickness Logic (Inner 90% is transparent)
-                    float innerRadiusRad = targetRadiusRad * 0.9;
+                    float2 screenCenter = i.uv - 0.5;
+                    float crossLen = 0.012;
+                    float crossThick = 0.001;
+                    float crossGap = 0.003;
                     
-                    if (angle > innerRadiusRad)
-                    {
-                        return _CursorColor;
-                    }
+                    float hLine = step(abs(screenCenter.y), crossThick) 
+                                * step(crossGap, abs(screenCenter.x)) 
+                                * step(abs(screenCenter.x), crossLen);
+                    float vLine = step(abs(screenCenter.x), crossThick) 
+                                * step(crossGap, abs(screenCenter.y)) 
+                                * step(abs(screenCenter.y), crossLen);
+                    
+                    float crossMask = saturate(hLine + vLine) * 0.5;
+                    finalCol.rgb = lerp(finalCol.rgb, float3(1, 1, 1), crossMask);
                 }
 
                 return finalCol;
