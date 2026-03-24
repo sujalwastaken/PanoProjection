@@ -4,6 +4,7 @@ Shader "Hidden/PanoramaGridComposite"
     {
         _MainTex ("Base", 2D) = "white" {}
         _ColorX ("Color X", Color) = (1,0,0,1)
+        _ColorY ("Color Y", Color) = (0,1,0,1)
         _ColorZ ("Color Z", Color) = (0,0,1,1)
         _GhostColor ("Ghost Color", Color) = (1,1,0,1)
         _Subdivisions ("Subdivisions", Float) = 8.0
