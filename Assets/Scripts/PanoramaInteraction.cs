@@ -33,8 +33,20 @@ public class PanoramaPaintGPU : MonoBehaviour
 
     public Vector3 gridRotation = Vector3.zero;
 
+    public enum GridAxisMode { 
+        AllBox = 0, 
+        InfiniteX_Walls = 1, 
+        InfiniteY_Floor = 2, 
+        InfiniteZ_Walls = 3, 
+        AllInfinite = 4,
+        HorizonOnly = 5,
+        SphericalGlobe = 6
+    }
+
     [Header("Grid Visualization")]
-    [Range(2.0f, 45.0f)] public float gridSpacing = 10.0f;
+    [Range(1, 32)] public int gridSubdivisions = 8;
+    public GridAxisMode activeGridAxis = GridAxisMode.AllBox;
+    [Range(0.001f, 0.5f)] public float gridFalloff = 0.15f; // NEW: Controls depth fade
     [Range(0.1f, 5.0f)] public float gridThickness = 1.0f;
     [Range(0.0f, 1.0f)] public float gridOpacity = 0.5f;
 
@@ -42,8 +54,9 @@ public class PanoramaPaintGPU : MonoBehaviour
     public Color gridColorY = new Color(0, 1, 0, 1.0f);
     public Color gridColorZ = new Color(0, 0, 1, 1.0f);
 
-    // Track previous values to detect changes
-    private float lastGridSpacing;
+    private int lastGridSubdivisions;
+    private GridAxisMode lastGridAxis;
+    private float lastGridFalloff;
     private float lastGridThickness;
     private float lastGridOpacity;
     private Color lastGridColorX;
@@ -53,6 +66,7 @@ public class PanoramaPaintGPU : MonoBehaviour
     private bool lastShowGrid;
     private bool lastDiagonalMode;
     private bool isSnappingActive = false;
+    private Vector3 activeTargetVP = Vector3.zero;
 
     [Header("Snapping")]
     public float rulerLockThreshold = 0.005f;
@@ -132,7 +146,6 @@ public class PanoramaPaintGPU : MonoBehaviour
         // -------------------------
 
         // Initialize grid tracking values
-        lastGridSpacing = gridSpacing;
         lastGridThickness = gridThickness;
         lastGridOpacity = gridOpacity;
         lastGridColorX = gridColorX;
@@ -249,6 +262,7 @@ public class PanoramaPaintGPU : MonoBehaviour
             if (lockedAxis != -1)
             {
                 lockedAxis = -1;
+                activeTargetVP = Vector3.zero; // RESET TARGET VP HERE
                 if (layerManager != null) layerManager.compositionDirty = true;
             }
         }
@@ -556,7 +570,6 @@ public class PanoramaPaintGPU : MonoBehaviour
     {
         bool changed = false;
 
-        if (gridSpacing != lastGridSpacing) { lastGridSpacing = gridSpacing; changed = true; }
         if (gridThickness != lastGridThickness) { lastGridThickness = gridThickness; changed = true; }
         if (gridOpacity != lastGridOpacity) { lastGridOpacity = gridOpacity; changed = true; }
         if (gridColorX != lastGridColorX) { lastGridColorX = gridColorX; changed = true; }
@@ -565,7 +578,9 @@ public class PanoramaPaintGPU : MonoBehaviour
         if (gridRotation != lastGridRotation) { lastGridRotation = gridRotation; changed = true; }
         if (showGrid != lastShowGrid) { lastShowGrid = showGrid; changed = true; }
         if (useDiagonalSnapping != lastDiagonalMode) { lastDiagonalMode = useDiagonalSnapping; changed = true; }
-
+        if (gridSubdivisions != lastGridSubdivisions) { lastGridSubdivisions = gridSubdivisions; changed = true; }
+        if (activeGridAxis != lastGridAxis) { lastGridAxis = activeGridAxis; changed = true; }
+        if (gridFalloff != lastGridFalloff) { lastGridFalloff = gridFalloff; changed = true; }
         return changed;
     }
 
@@ -589,24 +604,39 @@ public class PanoramaPaintGPU : MonoBehaviour
         
         gridCompositeMat.SetFloat("_ActiveAxis", axisToSend);
 
-        if (isSnappingActive)
-        {
-            // Transform ghost normal to grid-local space
+        if (isSnappingActive) {
             Quaternion gridRot = Quaternion.Euler(gridRotation);
             Vector3 localNormal = Quaternion.Inverse(gridRot) * activeSnapNormal;
             gridCompositeMat.SetVector("_GhostNormal", new Vector4(localNormal.x, localNormal.y, localNormal.z, 1.0f));
-        }
-        else
-        {
+
+            // Pass the local Target VP for the Ring
+            Vector3 localVP = Quaternion.Inverse(gridRot) * activeTargetVP;
+            gridCompositeMat.SetVector("_TargetVP", new Vector4(localVP.x, localVP.y, localVP.z, 1.0f));
+
+            Color ghostColor = Color.white;
+            if (lockedAxis == 0) ghostColor = gridColorX;      
+            else if (lockedAxis == 1) ghostColor = gridColorY; 
+            else if (lockedAxis == 2) ghostColor = gridColorZ; 
+            else if (lockedAxis >= 10 && lockedAxis <= 11) ghostColor = Color.yellow;  
+            else if (lockedAxis >= 12 && lockedAxis <= 13) ghostColor = Color.magenta; 
+            else if (lockedAxis >= 14 && lockedAxis <= 15) ghostColor = Color.cyan;    
+            
+            gridCompositeMat.SetColor("_GhostColor", ghostColor);
+        } else {
             gridCompositeMat.SetVector("_GhostNormal", Vector4.zero);
+            gridCompositeMat.SetVector("_TargetVP", Vector4.zero);
+            gridCompositeMat.SetColor("_GhostColor", Color.clear);
         }
 
-        if (showGrid || enableSnapping)
-        {
+        if (showGrid || enableSnapping) {
             gridCompositeMat.SetColor("_ColorX", gridColorX);
             gridCompositeMat.SetColor("_ColorY", gridColorY);
             gridCompositeMat.SetColor("_ColorZ", gridColorZ);
-            gridCompositeMat.SetFloat("_Spacing", gridSpacing);
+            
+            gridCompositeMat.SetFloat("_Subdivisions", (float)gridSubdivisions);
+            gridCompositeMat.SetFloat("_GridAxisMode", (float)activeGridAxis);
+            gridCompositeMat.SetFloat("_Falloff", gridFalloff); // PASS FALLOFF
+            
             gridCompositeMat.SetFloat("_Thickness", gridThickness);
             gridCompositeMat.SetFloat("_Opacity", gridOpacity);
 
@@ -684,6 +714,7 @@ public class PanoramaPaintGPU : MonoBehaviour
         Vector3 targetVP = targetAxes[index];
         Vector3 finalNormal = Vector3.Cross(strokeStartP3D, targetVP).normalized;
         activeSnapNormal = finalNormal;
+        activeTargetVP = targetVP; // Saves the actual 3D VP point for the shader ring
         return Vector3.ProjectOnPlane(currentP, finalNormal).normalized;
     }
 

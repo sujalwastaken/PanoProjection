@@ -25,9 +25,9 @@ public class PanoramaUI : MonoBehaviour
 
     // Dimensions
     private float uiWidth = 450f;
-    private float baseHeight = 550f; 
-    private float colorPickerHeight = 120f; // Adjusted for single slider
-    private float gridControlsHeight = 200f; 
+    private float baseHeight = 600f; // Increased slightly for new tool info
+    private float colorPickerHeight = 120f; 
+    private float gridControlsHeight = 220f; // Increased for new grid sliders
 
     void Start()
     {
@@ -216,20 +216,37 @@ public class PanoramaUI : MonoBehaviour
             GUILayout.Space(15);
             Color originalColor = GUI.color;
             
-            DrawLabelWithShadow($"Grid Spacing: {painter.gridSpacing:F1}");
-            painter.gridSpacing = GUILayout.HorizontalSlider(painter.gridSpacing, 2.0f, 45.0f);
+            // 1. Subdivisions
+            DrawLabelWithShadow($"Grid Subdivisions: {painter.gridSubdivisions}");
+            painter.gridSubdivisions = (int)GUILayout.HorizontalSlider(painter.gridSubdivisions, 1, 32);
 
+            // 2. Thickness
             DrawLabelWithShadow($"Grid Thickness: {painter.gridThickness:F2}");
             painter.gridThickness = GUILayout.HorizontalSlider(painter.gridThickness, 0.1f, 5.0f); 
 
+            // 3. Opacity
             DrawLabelWithShadow($"Grid Opacity: {painter.gridOpacity:F2}");
             painter.gridOpacity = GUILayout.HorizontalSlider(painter.gridOpacity, 0.0f, 1.0f);
 
-            GUI.color = textColor; 
+            // 4. Falloff
+            DrawLabelWithShadow($"Grid Falloff (Depth Fade): {painter.gridFalloff:F3}");
+            painter.gridFalloff = GUILayout.HorizontalSlider(painter.gridFalloff, 0.001f, 0.5f);
 
-            if (painter.useDiagonalSnapping) GUI.color = Color.green;
-            
-            painter.useDiagonalSnapping = GUILayout.Toggle(painter.useDiagonalSnapping, " 45° Snap Mode [F]");
+            GUILayout.Space(5);
+
+            // 5. Grid Axis Mode Selector (Click to cycle)
+            GUI.color = Color.cyan;
+            if (GUILayout.Button($"Grid Mode: {painter.activeGridAxis.ToString()}"))
+            {
+                int nextMode = (int)painter.activeGridAxis + 1;
+                if (nextMode > 6) nextMode = 0; // Wraps back to 0 after mode 6
+                painter.activeGridAxis = (PanoramaPaintGPU.GridAxisMode)nextMode;
+                
+            }
+
+            // 6. Diagonals Mode
+            GUI.color = (painter.useDiagonalSnapping) ? Color.green : textColor;
+            painter.useDiagonalSnapping = GUILayout.Toggle(painter.useDiagonalSnapping, " 45° Snap / Diagonals [F]");
             
             GUI.color = originalColor; 
         }

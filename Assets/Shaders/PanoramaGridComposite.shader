@@ -2,27 +2,23 @@ Shader "Hidden/PanoramaGridComposite"
 {
     Properties
     {
-        _MainTex ("Paint Texture", 2D) = "white" {}
-        _ColorX ("Color X", Color) = (1, 0, 0, 0.5)
-        _ColorY ("Color Y", Color) = (0, 1, 0, 0.5)
-        _ColorZ ("Color Z", Color) = (0, 0, 1, 0.5)
-        
-        _Spacing ("Spacing Deg", Float) = 10.0
-        _Thickness ("Pixel Thickness", Float) = 1.0
-        _Opacity ("Grid Opacity", Float) = 1.0
-        
-        _Rot0 ("Rot0", Vector) = (1,0,0,0)
-        _Rot1 ("Rot1", Vector) = (0,1,0,0)
-        _Rot2 ("Rot2", Vector) = (0,0,1,0)
+        _MainTex ("Base", 2D) = "white" {}
+        _ColorX ("Color X", Color) = (1,0,0,1)
+        _ColorZ ("Color Z", Color) = (0,0,1,1)
+        _GhostColor ("Ghost Color", Color) = (1,1,0,1)
+        _Subdivisions ("Subdivisions", Float) = 8.0
+        _Thickness ("Thickness", Float) = 1.0
+        _Opacity ("Opacity", Float) = 0.5
+        _Falloff ("Grid Falloff", Float) = 0.15 // NEW: Fades lines at the horizon
         _UseGrid ("Use Grid", Float) = 0.0
         _ShowDiagonals ("Show Diagonals", Float) = 0.0
-        _ActiveAxis ("Active Axis Index", Float) = -1.0
-        _GhostNormal ("Ghost Line Normal", Vector) = (0,0,0,0) 
+        _GridAxisMode ("Grid Axis Mode", Float) = 0.0
+        _GhostNormal ("Ghost Normal", Vector) = (0,0,0,0)
+        _TargetVP ("Target VP", Vector) = (0,0,0,0) // NEW: For the Snapping Ring
     }
     SubShader
     {
         Tags { "RenderType"="Opaque" }
-        LOD 100
         Pass
         {
             CGPROGRAM
@@ -34,190 +30,178 @@ Shader "Hidden/PanoramaGridComposite"
             struct v2f { float2 uv : TEXCOORD0; float4 vertex : SV_POSITION; };
 
             sampler2D _MainTex;
-            float4 _ColorX, _ColorY, _ColorZ;
-            float _Spacing, _Thickness, _UseGrid, _Opacity, _ShowDiagonals, _ActiveAxis;
-            float4 _Rot0, _Rot1, _Rot2, _GhostNormal;
+            float4 _ColorX, _ColorY, _ColorZ, _GhostColor;
+            float _Subdivisions, _Thickness, _Opacity, _UseGrid, _ShowDiagonals, _GridAxisMode, _Falloff;
+            float4 _GhostNormal, _TargetVP, _Rot0, _Rot1, _Rot2;
 
             #define PI 3.14159265359
 
-            v2f vert (appdata v) {
-                v2f o;
-                o.vertex = UnityObjectToClipPos(v.vertex);
-                o.uv = v.uv;
-                return o;
-            }
-            
-            // Standard Grid Line Calculation
-            float GetLineIntensity(float angle, float thickness) {
-                float sp = _Spacing * (PI / 180.0);
-                float val = fmod(abs(angle), sp);
-                float dist = min(val, sp - val);
-                float angleDerivative = fwidth(angle) + 1e-5;
-                float distInPixels = dist / angleDerivative;
-                return 1.0 - smoothstep(thickness * 0.5, thickness * 0.5 + 1.0, distInPixels);
+            v2f vert (appdata v) { v2f o; o.vertex = UnityObjectToClipPos(v.vertex); o.uv = v.uv; return o; }
+
+            float3 UVToDir(float2 uv) {
+                float lon = (uv.x - 0.5) * 2.0 * PI; float lat = (0.5 - uv.y) * PI; float cosLat = cos(lat);
+                return float3(cosLat * sin(lon), sin(lat), cosLat * cos(lon));
             }
 
-            // ROBUST Ghost Line Calculation
-            float DrawGreatCircle(float3 viewDir, float3 normal, float thickness) {
-                // Dot product 0 = on the line
-                float d = dot(viewDir, normal);
+            void DrawVP(float3 rayDir, float3 vpDir, fixed4 color, float radius, inout fixed4 layer) {
+                float angle = acos(clamp(abs(dot(rayDir, normalize(vpDir))), 0.0, 1.0));
+                float dotAlpha = smoothstep(radius, radius * 0.8, angle);
+                layer = max(layer, dotAlpha * color);
+            }
+
+            void DrawPlane(float u, float v, float n, fixed4 colU, fixed4 colV, float planeMask, float baseLineW, inout fixed4 layer) {
+                if (planeMask < 0.5 || abs(n) < 0.0001) return;
                 
-                // Convert to screen space pixel distance BEFORE taking absolute value
-                float fw = fwidth(d) + 1e-6;
-                float distPixels = abs(d) / fw;
+                float2 uv = float2(u, v) / abs(n) * _Subdivisions;
+                float2 dist = abs(frac(uv + 0.5) - 0.5);
+                float2 fw = fwidth(uv);
                 
-                // Use standard smoothstep for clean anti-aliasing
-                return 1.0 - smoothstep(thickness * 0.5, thickness * 0.5 + 1.2, distPixels);
+                // --- GRID FALLOFF ---
+                float depth = abs(n);
+                float fadeOpacity = smoothstep(_Falloff * 0.1, _Falloff + 0.001, depth); 
+                float lineW = baseLineW * lerp(0.2, 1.0, smoothstep(0.0, 0.3, depth)); 
+                
+                float2 lines = smoothstep(fw * (lineW + 1.0), fw * max(0.01, lineW - 0.5), dist);
+
+                float2 idx = floor(uv + 0.5);
+                float2 isEven = step(fmod(abs(idx), 2.0), 0.5);
+                fixed4 grey = fixed4(0.5, 0.5, 0.5, 1.0);
+                fixed4 cU = lerp(grey, colU, isEven.x);
+                fixed4 cV = lerp(grey, colV, isEven.y);
+
+                float2 isZero = step(abs(idx), 0.1);
+                cU = lerp(cU, colU * 1.5, isZero.x);
+                cV = lerp(cV, colV * 1.5, isZero.y);
+                float2 linesM = smoothstep(fw * (lineW*2.0 + 1.0), fw * max(0.01, lineW*2.0 - 0.5), abs(uv));
+                lines = max(lines, linesM);
+
+                // --- MODE 5: HORIZON ONLY ---
+                if (_GridAxisMode > 4.5 && _GridAxisMode < 5.5) {
+                    layer = max(layer, linesM.x * colU * 1.5 * fadeOpacity);
+                    layer = max(layer, linesM.y * colV * 1.5 * fadeOpacity);
+                    return; // Skip normal grid and diagonals
+                }
+
+                layer = max(layer, lines.x * cU * fadeOpacity);
+                layer = max(layer, lines.y * cV * fadeOpacity);
+
+                if (_ShowDiagonals > 0.5) {
+                    float d1 = abs(frac(uv.x - uv.y + 0.5) - 0.5);
+                    float d2 = abs(frac(uv.x + uv.y + 0.5) - 0.5);
+                    float fwD1 = fwidth(uv.x - uv.y);
+                    float fwD2 = fwidth(uv.x + uv.y);
+                    float lD1 = smoothstep(fwD1*(lineW+1.0), fwD1*max(0.01, lineW-0.5), d1);
+                    float lD2 = smoothstep(fwD2*(lineW+1.0), fwD2*max(0.01, lineW-0.5), d2);
+                    layer = max(layer, max(lD1, lD2) * fixed4(1,1,1,1) * 0.35 * fadeOpacity);
+                }
             }
 
-            float DrawDot(float3 viewDir, float3 targetDir, float relativeSize) {
-                float dotVal = abs(dot(viewDir, targetDir));
-                float diff = 1.0 - dotVal;
-                float threshold = relativeSize * 0.000001; 
-                float edgeWidth = fwidth(diff);
-                return smoothstep(threshold + edgeWidth, threshold, diff);
-            }
-
-            float DrawRing(float3 viewDir, float3 targetDir, float relativeSize) {
-                float dotVal = abs(dot(viewDir, targetDir));
-                float diff = 1.0 - dotVal;
-                float threshold = relativeSize * 0.00001;
-                float ringRadius = threshold * 1.8; 
-                float ringThick = threshold * 0.8;
-                float edge = fwidth(diff);
-                float d = abs(diff - ringRadius);
-                return 1.0 - smoothstep(ringThick - edge, ringThick, d);
-            }
-            
             fixed4 frag (v2f i) : SV_Target {
-                fixed4 paint = tex2D(_MainTex, i.uv);
-                
-                // Early exit if everything is off
-                if (_ShowDiagonals < 0.5 && _UseGrid < 0.5 && _ActiveAxis < -0.5 && _GhostNormal.w < 0.1) return paint;
-                
-                float lon = (i.uv.x - 0.5) * 2.0 * PI;
-                float lat = (0.5 - i.uv.y) * PI;
-                float3 dir = float3(cos(lat)*sin(lon), sin(lat), cos(lat)*cos(lon));
+                float vpSize = 0.001; 
+                fixed4 col = tex2D(_MainTex, i.uv);
+                float3 dir = UVToDir(i.uv);
                 
                 float3x3 rot = float3x3(_Rot0.xyz, _Rot1.xyz, _Rot2.xyz);
-                dir = mul(transpose(rot), dir); 
-                
-                // --- 1. CALCULATE LAYERS ---
+                float3 localDir = mul(rot, dir);
 
-                // LAYER A: MARKERS (Dots)
-                float4 markerColor = float4(0,0,0,0);
-                
-                float dX = DrawDot(dir, float3(1,0,0), 1.0);
-                float dY = DrawDot(dir, float3(0,1,0), 1.0);
-                float dZ = DrawDot(dir, float3(0,0,1), 1.0);
-                
-                markerColor = max(markerColor, float4(1,0,0,1) * dX);
-                markerColor = max(markerColor, float4(0,1,0,1) * dY);
-                markerColor = max(markerColor, float4(0,0,1,1) * dZ);
+                fixed4 gridLayer = fixed4(0,0,0,0);
 
-                // Diagonals
-                float dXY = max(DrawDot(dir, normalize(float3(1,1,0)), 1.0), DrawDot(dir, normalize(float3(-1,1,0)), 1.0));
-                markerColor = max(markerColor, float4(1,1,0,1) * dXY); // Yellow
+                if (_UseGrid > 0.5)
+                {
+                    int mode = round(_GridAxisMode);
+                    float lineW = _Thickness * 0.5;
 
-                float dXZ = max(DrawDot(dir, normalize(float3(1,0,1)), 1.0), DrawDot(dir, normalize(float3(-1,0,1)), 1.0));
-                markerColor = max(markerColor, float4(1,0,1,1) * dXZ); // Magenta
+                    // --- MODE 6: SPHERICAL GLOBE ---
+                    if (mode == 6) {
+                        float lon = (atan2(localDir.x, localDir.z) / PI) * _Subdivisions * 2.0; 
+                        float lat = (asin(localDir.y) / (PI * 0.5)) * _Subdivisions;
+                        
+                        float2 uvSph = float2(lon, lat);
+                        float2 distSph = abs(frac(uvSph + 0.5) - 0.5);
+                        float2 fwSph = fwidth(uvSph);
+                        
+                        float2 linesSph = smoothstep(fwSph * (lineW + 1.0), fwSph * max(0.01, lineW - 0.5), distSph);
+                        
+                        // Emphasize Equator and Prime Meridians
+                        float2 idx = floor(uvSph + 0.5);
+                        float2 isZero = step(abs(idx), 0.1);
+                        
+                        fixed4 cLon = lerp(_ColorZ, _ColorZ * 1.5, isZero.x);
+                        fixed4 cLat = lerp(_ColorY, _ColorY * 1.5, isZero.y);
+                        
+                        float2 linesM = smoothstep(fwSph * (lineW*2.0 + 1.0), fwSph * max(0.01, lineW*2.0 - 0.5), abs(uvSph));
+                        linesSph = max(linesSph, linesM);
+                        
+                        gridLayer = max(gridLayer, linesSph.x * cLon);
+                        gridLayer = max(gridLayer, linesSph.y * cLat);
+                    } 
+                    else 
+                    {
+                        // --- CARTESIAN MODES (0 to 5) ---
+                        float3 absDir = abs(localDir);
+                        float maxDir = max(absDir.x, max(absDir.y, absDir.z));
+                        
+                        float3 mask = float3(1,1,1);
+                        if (mode == 0) {
+                            mask.x = step(maxDir - 0.0001, absDir.x);
+                            mask.y = step(maxDir - 0.0001, absDir.y);
+                            mask.z = step(maxDir - 0.0001, absDir.z);
+                        } 
+                        else if (mode == 1) { mask = float3(1,0,0); }
+                        else if (mode == 2) { mask = float3(0,1,0); }
+                        else if (mode == 3) { mask = float3(0,0,1); }
+                        // Modes 4 & 5 use mask(1,1,1)
 
-                float dYZ = max(DrawDot(dir, normalize(float3(0,1,1)), 1.0), DrawDot(dir, normalize(float3(0,-1,1)), 1.0));
-                markerColor = max(markerColor, float4(0,1,1,1) * dYZ); // Cyan
-
-                // LAYER B: HIGHLIGHTS (Ring & Ghost Line)
-                float4 ringColor = float4(0,0,0,0);
-                float4 ghostColor = float4(0,0,0,0);
-                float4 currentAxisColor = float4(1,1,1,1); 
-
-                float ringAlpha = 0;
-                
-                // Determine Active Color & Ring Alpha
-                if(abs(_ActiveAxis - 0.0) < 0.1) { ringAlpha = DrawRing(dir, float3(1,0,0), 1.0); currentAxisColor = float4(1,0,0,1); }
-                else if(abs(_ActiveAxis - 1.0) < 0.1) { ringAlpha = DrawRing(dir, float3(0,1,0), 1.0); currentAxisColor = float4(0,1,0,1); }
-                else if(abs(_ActiveAxis - 2.0) < 0.1) { ringAlpha = DrawRing(dir, float3(0,0,1), 1.0); currentAxisColor = float4(0,0,1,1); }
-                else if(_ActiveAxis > 9.0) {
-                    if(abs(_ActiveAxis - 10.0) < 0.1 || abs(_ActiveAxis - 11.0) < 0.1) {
-                        currentAxisColor = float4(1,1,0,1);
-                        ringAlpha = (abs(_ActiveAxis - 10.0) < 0.1) ? DrawRing(dir, normalize(float3(1,1,0)), 1.0) : DrawRing(dir, normalize(float3(-1,1,0)), 1.0);
+                        DrawPlane(localDir.z, localDir.y, localDir.x, _ColorY, _ColorZ, mask.x, lineW, gridLayer);
+                        DrawPlane(localDir.x, localDir.z, localDir.y, _ColorZ, _ColorX, mask.y, lineW, gridLayer);
+                        DrawPlane(localDir.x, localDir.y, localDir.z, _ColorY, _ColorX, mask.z, lineW, gridLayer);
                     }
-                    else if(abs(_ActiveAxis - 12.0) < 0.1 || abs(_ActiveAxis - 13.0) < 0.1) {
-                        currentAxisColor = float4(1,0,1,1);
-                        ringAlpha = (abs(_ActiveAxis - 12.0) < 0.1) ? DrawRing(dir, normalize(float3(1,0,1)), 1.0) : DrawRing(dir, normalize(float3(-1,0,1)), 1.0);
-                    }
-                    else {
-                        currentAxisColor = float4(0,1,1,1);
-                        ringAlpha = (abs(_ActiveAxis - 14.0) < 0.1) ? DrawRing(dir, normalize(float3(0,1,1)), 1.0) : DrawRing(dir, normalize(float3(0,-1,1)), 1.0);
+
+                    // --- VANISHING POINT DOTS ---
+                    DrawVP(localDir, float3(1,0,0), _ColorX, vpSize, gridLayer);
+                    DrawVP(localDir, float3(0,1,0), _ColorY, vpSize, gridLayer);
+                    DrawVP(localDir, float3(0,0,1), _ColorZ, vpSize, gridLayer);
+
+                    if (_ShowDiagonals > 0.5 && mode != 6) {
+                        fixed4 colXY = fixed4(1,1,0,1); 
+                        fixed4 colXZ = fixed4(1,0,1,1); 
+                        fixed4 colYZ = fixed4(0,1,1,1); 
+                        
+                        DrawVP(localDir, float3(1,1,0), colXY, vpSize, gridLayer); DrawVP(localDir, float3(-1,1,0), colXY, vpSize, gridLayer);
+                        DrawVP(localDir, float3(1,0,1), colXZ, vpSize, gridLayer); DrawVP(localDir, float3(-1,0,1), colXZ, vpSize, gridLayer);
+                        DrawVP(localDir, float3(0,1,1), colYZ, vpSize, gridLayer); DrawVP(localDir, float3(0,-1,1), colYZ, vpSize, gridLayer);
                     }
                 }
-                
-                // Ring is ALWAYS Black
-                ringColor = float4(0,0,0,1) * ringAlpha;
 
-                // Ghost Line
-                if (_GhostNormal.w > 0.5) {
-                    float ghostWidth = _Thickness * 1.5; // 50% bigger than grid lines
-                    float ghostIntensity = DrawGreatCircle(dir, _GhostNormal.xyz, ghostWidth);
-                    // Color at FULL brightness, but with lower alpha for transparency
-                    ghostColor = currentAxisColor;
-                    ghostColor.rgb *= ghostIntensity; // Full brightness
-                    ghostColor.a = ghostIntensity * 0.5; // Lower opacity
+                // --- GHOST SNAPPING PLANE (Thickness scales with Grid) ---
+                if (length(_GhostNormal.xyz) > 0.1)
+                {
+                    float ghostDist = abs(dot(localDir, _GhostNormal.xyz));
+                    float fwGhost = fwidth(ghostDist);
+                    float ghostLineW = _Thickness * 0.2 + 0.4; // THICKNESS CONTROL
+                    float ghostLine = smoothstep(fwGhost * (ghostLineW * 2.0 + 1.0), fwGhost * max(0.01, ghostLineW * 2.0 - 0.5), ghostDist);
+                    gridLayer = max(gridLayer, ghostLine * _GhostColor); 
+                } 
+
+                if (length(_TargetVP.xyz) > 0.1)
+                {
+                    float vpDot = abs(dot(localDir, _TargetVP.xyz));
+                    
+                    // --- THE FIX: Ring radius mathematically linked to vpSize ---
+                    // Multiply vpSize by 8.0 to make the ring act as a comfortable reticle around the dot
+                    float ringAngle = vpSize * 4.0; 
+                    float ringRadius = cos(ringAngle); 
+                    
+                    float ringDist = abs(vpDot - ringRadius);
+                    float fwRing = fwidth(vpDot); 
+                    float ghostLineW = _Thickness * 0.2 + 0.4;
+                    float ringLine = smoothstep(fwRing * (ghostLineW * 2.0 + 1.0), fwRing * max(0.01, ghostLineW * 2.0 - 0.5), ringDist);
+                    gridLayer = max(gridLayer, ringLine * _GhostColor);
                 }
 
-                // LAYER C: GRID LINES
-                float4 gridColor = float4(0,0,0,0);
-                if (_UseGrid > 0.5) {
-                    float angleY = atan2(dir.x, dir.z);
-                    float angleX = atan2(dir.y, dir.z);
-                    float angleZ = atan2(dir.y, dir.x);
-                    
-                    float strengthY = GetLineIntensity(angleY, _Thickness);
-                    float strengthX = GetLineIntensity(angleX, _Thickness);
-                    float strengthZ = GetLineIntensity(angleZ, _Thickness);
-                    
-                    float axisThickness = _Thickness * 3.0;
-                    float axisX = DrawGreatCircle(dir, float3(1,0,0), axisThickness);
-                    float axisY = DrawGreatCircle(dir, float3(0,1,0), axisThickness);
-                    float axisZ = DrawGreatCircle(dir, float3(0,0,1), axisThickness);
-                    
-                    // Sum Grid Components
-                    float4 gBase = float4(0,0,0,0);
-                    gBase = max(gBase, _ColorX * strengthX);
-                    gBase = max(gBase, _ColorY * strengthY);
-                    gBase = max(gBase, _ColorZ * strengthZ);
-                    
-                    float4 aBase = float4(0,0,0,0);
-                    aBase = max(aBase, float4(1, 0, 0, 1) * axisX);
-                    aBase = max(aBase, float4(0, 1, 0, 1) * axisY);
-                    aBase = max(aBase, float4(0, 0, 1, 1) * axisZ);
-                    
-                    gridColor = lerp(gBase, aBase, aBase.a);
-                    gridColor.a *= _Opacity;
-                }
-
-                // --- 2. COMPOSITE STACK (Bottom to Top) ---
-                // Order: Grid -> GhostLine -> Markers -> Ring
-                    
-                float4 finalComposite = gridColor;
-
-                // Blend Ghost Line ON TOP of Grid (standard alpha blend)
-                finalComposite.rgb = ghostColor.rgb + finalComposite.rgb * (1.0 - ghostColor.a);
-                finalComposite.a = ghostColor.a + finalComposite.a * (1.0 - ghostColor.a);
-
-                // Blend Markers ON TOP
-                finalComposite.rgb = markerColor.rgb * markerColor.a + finalComposite.rgb * (1.0 - markerColor.a);
-                finalComposite.a = markerColor.a + finalComposite.a * (1.0 - markerColor.a);
-
-                // Blend Ring ON TOP (Black Ring cuts through everything)
-                finalComposite.rgb = ringColor.rgb * ringColor.a + finalComposite.rgb * (1.0 - ringColor.a);
-                finalComposite.a = ringColor.a + finalComposite.a * (1.0 - ringColor.a);
-
-                // --- 3. FINAL OUTPUT ---
-                // Blend composite over the original paint texture
-                // Preserving Paint's Alpha Channel
-                float3 resultColor = lerp(paint.rgb, finalComposite.rgb, finalComposite.a);
-                
-                return fixed4(resultColor, paint.a);
+                gridLayer.a = saturate(gridLayer.a);
+                col.rgb = lerp(col.rgb, gridLayer.rgb, gridLayer.a * _Opacity);
+                return col;
             }
             ENDCG
         }
