@@ -285,7 +285,7 @@ MonoBehaviour:
   rulerLockThreshold: 0.005
   brushSize: 10
   eraserSize: 30
-  brushSpacing: 0.5
+  brushSpacing: 0.05
   hardness: 1
   useSmartBrush: 1
   isEraser: 0
