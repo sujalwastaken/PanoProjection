@@ -62,7 +62,6 @@ public class PanoramaLayerManager : MonoBehaviour
     private int groupCount = 1;
     private int animCount = 1;
     private int camCount = 1;
-    private PaintLayer previouslyActivePaintLayer = null;
 
     public enum ExportFormat { Sequence, MP4, GIF }
 
@@ -117,12 +116,7 @@ public class PanoramaLayerManager : MonoBehaviour
 
     void RebuildCompositeCanvas()
     {
-        // FIX: Properly destroy the old canvas wrapper before creating a new one
-        if (canvasComposite != null)
-        {
-            canvasComposite.Release();
-            DestroyImmediate(canvasComposite);
-        }
+        if (canvasComposite != null) canvasComposite.Release();
 
         int w = (isPlaying && reduceResolutionOnPlay) ? fullWidth / 2 : fullWidth;
         int h = (isPlaying && reduceResolutionOnPlay) ? fullHeight / 2 : fullHeight;
@@ -396,7 +390,10 @@ public class PanoramaLayerManager : MonoBehaviour
 
         if (activeLayer is PaintLayer pl)
         {
+            // Allow camera movement if layer exists (even if hidden)
             painter.allowCameraMovement = true;
+            
+            // Only allow painting if layer is visible
             if (pl.isVisible)
             {
                 bool isPaintable = true;
@@ -405,24 +402,21 @@ public class PanoramaLayerManager : MonoBehaviour
                     int activeIndex = animParent.GetActiveCellIndex(currentFrame);
                     if (activeIndex == -1 || animParent.children[activeIndex] != pl) isPaintable = false;
                 }
-                
                 if (isPaintable)
                 {
-                    // --- NON-DESTRUCTIVE PAGING ---
-                    // Drops the VRAM of the old frame, but history is safely parked on the SSD
-                    if (previouslyActivePaintLayer != null && previouslyActivePaintLayer != pl)
-                    {
-                        previouslyActivePaintLayer.HibernateRAM();
-                    }
-                    previouslyActivePaintLayer = pl;
-                    
                     pl.EnsureTextureAllocated();
                     painter.targetTexture = pl.texture;
                 }
             }
         }
-        else if (activeLayer is CameraLayer || activeLayer is GroupLayer || activeLayer is AnimationLayer)
+        else if (activeLayer is CameraLayer)
         {
+            painter.targetTexture = null;
+            painter.allowCameraMovement = true;
+        }
+        else if (activeLayer is GroupLayer || activeLayer is AnimationLayer)
+        {
+            // Allow camera movement for group/animation layers too
             painter.allowCameraMovement = true;
         }
     }
@@ -693,20 +687,6 @@ public class PanoramaLayerManager : MonoBehaviour
     AnimationLayer GetActiveAnimationLayer() { if (activeLayer is AnimationLayer al) return al; if (activeLayer != null && activeLayer.parent is AnimationLayer pl) return pl; return null; }
     void AutoSelectLayerForFrame(AnimationLayer animLayer) { int cellIndex = animLayer.GetActiveCellIndex(currentFrame); if (cellIndex != -1 && cellIndex < animLayer.children.Count) activeLayer = animLayer.children[cellIndex]; }
     public void SaveActiveLayerState() { if (activeLayer is PaintLayer pl) pl.SaveState(); }
-    public void UndoActiveLayer() 
-    { 
-        if (activeLayer is PaintLayer pl) 
-        { 
-            // The lambda () => compositionDirty = true runs only AFTER the file finishes loading
-            pl.Undo(() => { compositionDirty = true; }); 
-        } 
-    }
-    
-    public void RedoActiveLayer() 
-    { 
-        if (activeLayer is PaintLayer pl) 
-        { 
-            pl.Redo(() => { compositionDirty = true; }); 
-        } 
-    }
+    public void UndoActiveLayer() { if (activeLayer is PaintLayer pl) { pl.Undo(); compositionDirty = true; } }
+    public void RedoActiveLayer() { if (activeLayer is PaintLayer pl) { pl.Redo(); compositionDirty = true; } }
 }
