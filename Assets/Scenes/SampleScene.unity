@@ -138,6 +138,7 @@ GameObject:
   - component: {fileID: 963194233}
   - component: {fileID: 963194235}
   - component: {fileID: 963194234}
+  - component: {fileID: 963194236}
   - component: {fileID: 963194232}
   m_Layer: 0
   m_Name: Main Camera
@@ -338,6 +339,7 @@ MonoBehaviour:
   isHoveringGraph: 0
   isExporting: 0
   compositionDirty: 1
+  maxGlobalHistory: 20
   onionEnabled: 1
   onionSkinLoop: 1
   onionBefore: 1
@@ -369,6 +371,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 78b9eab2c9698a7479f3bad833232698, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+--- !u!114 &963194236
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 963194225}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6e36e1c6605533f4cbfccd52e446bde6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  updateEveryNFrames: 60
 --- !u!1 &1991774024
 GameObject:
   m_ObjectHideFlags: 1

@@ -25,9 +25,9 @@ public class PanoramaUI : MonoBehaviour
 
     // Dimensions
     private float uiWidth = 450f;
-    private float baseHeight = 600f; // Increased slightly for new tool info
+    private float baseHeight = 630f;
     private float colorPickerHeight = 120f; 
-    private float gridControlsHeight = 220f; // Increased for new grid sliders
+    private float gridControlsHeight = 220f; 
 
     void Start()
     {
@@ -98,6 +98,9 @@ public class PanoramaUI : MonoBehaviour
 
         // --- Info ---
         DrawLabelWithShadow($"FPS: {Mathf.CeilToInt(fps)}");
+        
+        // --- RAM Display ---
+        DrawLabelWithShadow($"RAM: {MemoryTracker.Instance?.PrivateMemoryMB:F1} MB");
 
         Vector3 rot = cam.transform.eulerAngles;
         float x = (rot.x > 180) ? rot.x - 360 : rot.x;
