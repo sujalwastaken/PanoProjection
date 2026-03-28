@@ -212,8 +212,8 @@ public class PanoramaPaintGPU : MonoBehaviour
         bool isShift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
         bool isAlt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
 
-        if (isCtrl && Input.GetKeyDown(KeyCode.S)) { SavePanorama(); return; }
-        if (isCtrl && Input.GetKeyDown(KeyCode.D)) { LoadPanorama(); return; }
+        if (Input.GetKeyDown(KeyCode.F5)) { SavePanorama(); return; }
+        if (Input.GetKeyDown(KeyCode.F6)) { LoadPanorama(); return; }
 
         HandleToolInput();
 

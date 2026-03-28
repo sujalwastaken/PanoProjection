@@ -58,6 +58,8 @@ public class PanoPaintLayer : PanoLayerNode
 
         texture = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32);
         texture.enableRandomWrite = true;
+        texture.filterMode = FilterMode.Point; 
+        texture.useMipMap = false;
         texture.Create();
         ClearTexture();
     }

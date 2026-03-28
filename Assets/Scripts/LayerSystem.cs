@@ -37,6 +37,8 @@ public class PaintLayer : LayerNode
         if (texture != null && texture.IsCreated()) return;
         texture = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32);
         texture.enableRandomWrite = true;
+        texture.filterMode = FilterMode.Point; 
+        texture.useMipMap = false;
         texture.Create();
         ClearTexture();
     }
