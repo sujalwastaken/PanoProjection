@@ -330,6 +330,12 @@ MonoBehaviour:
   reduceResolutionOnPlay: 1
   exportWidth: 1920
   exportHeight: 1080
+  root:
+    name: 
+    id: 
+    isVisible: 0
+    expanded: 0
+    opacity: 0
   currentFrame: 0
   totalFrames: 48
   fps: 24

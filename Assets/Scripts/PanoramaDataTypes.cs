@@ -1,29 +1,35 @@
 using UnityEngine;
 using System.Collections.Generic;
 
+// 1. Keep your LayerType enum
+public enum LayerType { Paint, Folder, Animation, Camera }
+
+// 2. Base Layer (Upgraded with Serialization)
 [System.Serializable]
-public class PanoLayerNode
+public abstract class LayerNode
 {
     public string name;
     public string id;
-    public PanoLayerNode parent;
+    public LayerNode parent;
     public bool isVisible = true;
     public bool expanded = true;
     public float opacity = 1.0f;
 
-    public PanoLayerNode(string name)
+    public LayerNode(string name)
     {
         this.name = name;
         this.id = System.Guid.NewGuid().ToString();
     }
+    
     public virtual void Cleanup() { }
 }
 
+// 3. Group Layer (Upgraded with Serialization)
 [System.Serializable]
-public class PanoGroupLayer : PanoLayerNode
+public class GroupLayer : LayerNode
 {
-    public List<PanoLayerNode> children = new List<PanoLayerNode>();
-    public PanoGroupLayer(string name) : base(name) { }
+    public List<LayerNode> children = new List<LayerNode>();
+    public GroupLayer(string name) : base(name) { }
 
     public override void Cleanup()
     {
@@ -31,8 +37,9 @@ public class PanoGroupLayer : PanoLayerNode
     }
 }
 
+// 4. Paint Layer (Upgraded with Pano's Undo/Redo & Memory Optimization)
 [System.Serializable]
-public class PanoPaintLayer : PanoLayerNode
+public class PaintLayer : LayerNode
 {
     public RenderTexture texture;
     public List<RenderTexture> undoHistory = new List<RenderTexture>();
@@ -41,7 +48,7 @@ public class PanoPaintLayer : PanoLayerNode
     private int width, height;
     private int maxHistory = 30;
 
-    public PanoPaintLayer(string name, int w, int h) : base(name)
+    public PaintLayer(string name, int w, int h) : base(name)
     {
         this.width = w;
         this.height = h;
@@ -49,7 +56,7 @@ public class PanoPaintLayer : PanoLayerNode
         // Optimization: Reduce history for large textures
         if (width > 2048) maxHistory = 20;
 
-        // LAZY ALLOCATION: Do NOT create texture here
+        // LAZY ALLOCATION: Do NOT create texture here to save RAM
     }
 
     public void EnsureTextureAllocated()
@@ -58,8 +65,8 @@ public class PanoPaintLayer : PanoLayerNode
 
         texture = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32);
         texture.enableRandomWrite = true;
-        texture.filterMode = FilterMode.Point; 
-        texture.useMipMap = false;
+        texture.filterMode = FilterMode.Point; // Keeps strokes crisp
+        texture.useMipMap = false;             // Prevents zoom-blur
         texture.Create();
         ClearTexture();
     }
@@ -74,9 +81,15 @@ public class PanoPaintLayer : PanoLayerNode
 
     public override void Cleanup()
     {
-        if (texture != null) texture.Release();
-        foreach (var rt in undoHistory) if (rt) rt.Release();
-        foreach (var rt in redoHistory) if (rt) rt.Release();
+        // Combined memory safety from both scripts to completely prevent VRAM leaks
+        if (texture != null) 
+        { 
+            texture.Release(); 
+            UnityEngine.Object.DestroyImmediate(texture); 
+        }
+        foreach (var rt in undoHistory) if (rt) { rt.Release(); UnityEngine.Object.DestroyImmediate(rt); }
+        foreach (var rt in redoHistory) if (rt) { rt.Release(); UnityEngine.Object.DestroyImmediate(rt); }
+        
         undoHistory.Clear();
         redoHistory.Clear();
     }
@@ -94,7 +107,11 @@ public class PanoPaintLayer : PanoLayerNode
         {
             RenderTexture old = undoHistory[0];
             undoHistory.RemoveAt(0);
-            if (old != null) old.Release();
+            if (old != null) 
+            {
+                old.Release();
+                UnityEngine.Object.DestroyImmediate(old);
+            }
         }
     }
 
@@ -113,6 +130,7 @@ public class PanoPaintLayer : PanoLayerNode
 
         undoHistory.RemoveAt(undoHistory.Count - 1);
         lastState.Release();
+        UnityEngine.Object.DestroyImmediate(lastState);
     }
 
     public void Redo()
@@ -130,11 +148,13 @@ public class PanoPaintLayer : PanoLayerNode
 
         redoHistory.RemoveAt(redoHistory.Count - 1);
         nextState.Release();
+        UnityEngine.Object.DestroyImmediate(nextState);
     }
 }
 
+// 5. Animation Layer (Upgraded with Pano's Cached Timeline Logic)
 [System.Serializable]
-public class PanoAnimationLayer : PanoGroupLayer
+public class AnimationLayer : GroupLayer
 {
     public Dictionary<int, int> timelineMap = new Dictionary<int, int>();
 
@@ -142,7 +162,7 @@ public class PanoAnimationLayer : PanoGroupLayer
     private List<int> _cachedSortedKeys = new List<int>();
     private bool _dirtyKeys = true;
 
-    public PanoAnimationLayer(string name) : base(name) { }
+    public AnimationLayer(string name) : base(name) { }
 
     public void SetCell(int frame, int childIndex)
     {
@@ -165,13 +185,11 @@ public class PanoAnimationLayer : PanoGroupLayer
         }
 
         // 3. Binary Search Approximation (O(log n)) - Fast playback lookup
-        // We need the last key that is <= frame
         int count = _cachedSortedKeys.Count;
         if (count == 0) return -1;
         if (_cachedSortedKeys[0] > frame) return -1; // Frame is before first drawing
 
-        // Linear scan backward is fast enough for small N, but binary is better for long anims
-        // For simplicity and speed in C#, a reverse loop on cached keys is very fast
+        // Reverse loop is extremely fast for timeline lookups
         for (int i = count - 1; i >= 0; i--)
         {
             if (_cachedSortedKeys[i] < frame) return timelineMap[_cachedSortedKeys[i]];
@@ -181,8 +199,9 @@ public class PanoAnimationLayer : PanoGroupLayer
     }
 }
 
+// 6. Camera Layer (Merged curves and Group inheritance)
 [System.Serializable]
-public class PanoCameraLayer : PanoLayerNode
+public class CameraLayer : GroupLayer 
 {
     public AnimationCurve curvePitch = new AnimationCurve();
     public AnimationCurve curveYaw = new AnimationCurve();
@@ -190,12 +209,13 @@ public class PanoCameraLayer : PanoLayerNode
     public AnimationCurve curveZoom = new AnimationCurve();
     public AnimationCurve curveFisheye = new AnimationCurve();
 
-    public PanoCameraLayer(string name) : base(name) { }
+    public CameraLayer(string name) : base(name) { }
 
     public bool HasKeyframe(int frame)
     {
         return HasKey(curvePitch, frame) || HasKey(curveYaw, frame) || HasKey(curveRoll, frame) || HasKey(curveZoom, frame);
     }
+    
     bool HasKey(AnimationCurve c, int f)
     {
         foreach (var k in c.keys) if (Mathf.Approximately(k.time, f)) return true;
