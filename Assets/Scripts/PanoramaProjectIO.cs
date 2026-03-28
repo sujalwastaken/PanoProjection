@@ -298,7 +298,6 @@ public class PanoramaProjectIO : MonoBehaviour
                             }
 
                             Graphics.Blit(tex, pl.texture);
-                            pl.SaveState();
                             Destroy(tex);
                         }
                     }

@@ -44,6 +44,23 @@ public class PanoramaLayerManager : MonoBehaviour
     private float timer;
     public bool compositionDirty = true;
 
+    // --- GLOBAL UNDO SYSTEM ---
+    [System.Serializable]
+    public class GlobalHistoryState
+    {
+        public PaintLayer targetLayer;
+        public RenderTexture textureSnapshot;
+    }
+
+    private List<GlobalHistoryState> globalUndo = new List<GlobalHistoryState>();
+    private List<GlobalHistoryState> globalRedo = new List<GlobalHistoryState>();
+    public int maxGlobalHistory = 20; // 20 actions TOTAL across all frames/layerss
+
+    private void DestroyRT(RenderTexture rt)
+    {
+        if (rt != null) { rt.Release(); DestroyImmediate(rt); }
+    }
+
     // --- Onion Skin Settings ---
     [Header("Onion Skin")]
     public bool onionEnabled = false;
@@ -404,7 +421,10 @@ public class PanoramaLayerManager : MonoBehaviour
                 }
                 if (isPaintable)
                 {
-                    pl.EnsureTextureAllocated();
+                    if (Input.GetMouseButton(0) || Input.GetMouseButtonDown(0))
+                    {
+                        pl.EnsureTextureAllocated();
+                    }
                     painter.targetTexture = pl.texture;
                 }
             }
@@ -586,7 +606,7 @@ public class PanoramaLayerManager : MonoBehaviour
     }
     public void DeleteActiveLayer()
     {
-        if (activeLayer == null || activeLayer == root) return; LayerNode nodeToDelete = activeLayer; GroupLayer parent = (GroupLayer)nodeToDelete.parent;
+        if (activeLayer == null || activeLayer == root) return; LayerNode nodeToDelete = activeLayer; PurgeHistoryRecursive(nodeToDelete); GroupLayer parent = (GroupLayer)nodeToDelete.parent;
         int idx = parent.children.IndexOf(nodeToDelete); if (idx == -1) return; nodeToDelete.Cleanup();
         if (parent is AnimationLayer animParent) RemoveFromAnimTimeline(animParent, idx);
         parent.children.Remove(nodeToDelete);
@@ -686,7 +706,124 @@ public class PanoramaLayerManager : MonoBehaviour
     }
     AnimationLayer GetActiveAnimationLayer() { if (activeLayer is AnimationLayer al) return al; if (activeLayer != null && activeLayer.parent is AnimationLayer pl) return pl; return null; }
     void AutoSelectLayerForFrame(AnimationLayer animLayer) { int cellIndex = animLayer.GetActiveCellIndex(currentFrame); if (cellIndex != -1 && cellIndex < animLayer.children.Count) activeLayer = animLayer.children[cellIndex]; }
-    public void SaveActiveLayerState() { if (activeLayer is PaintLayer pl) pl.SaveState(); }
-    public void UndoActiveLayer() { if (activeLayer is PaintLayer pl) { pl.Undo(); compositionDirty = true; } }
-    public void RedoActiveLayer() { if (activeLayer is PaintLayer pl) { pl.Redo(); compositionDirty = true; } }
+ 
+    // --- THE GLOBAL HISTORY ENGINE ---
+
+    public void SaveActiveLayerState()
+    {
+        if (activeLayer is PaintLayer pl)
+        {
+            pl.EnsureTextureAllocated();
+
+            // Clear redo on new action
+            foreach (var s in globalRedo) DestroyRT(s.textureSnapshot);
+            globalRedo.Clear();
+
+            GlobalHistoryState state = new GlobalHistoryState();
+            state.targetLayer = pl;
+
+            // --- THE RECYCLING POOL FIX ---
+            if (globalUndo.Count >= maxGlobalHistory)
+            {
+                // 1. Steal the oldest snapshot's wrapper instead of destroying it
+                GlobalHistoryState oldest = globalUndo[0];
+                globalUndo.RemoveAt(0);
+                
+                state.textureSnapshot = oldest.textureSnapshot; // Reuse the 134MB block!
+                
+                // Safety: If dimensions changed (e.g. from a 4K layer to an 8K layer), we must reallocate
+                if (state.textureSnapshot.width != pl.texture.width || state.textureSnapshot.height != pl.texture.height)
+                {
+                    DestroyRT(state.textureSnapshot);
+                    state.textureSnapshot = new RenderTexture(pl.texture.descriptor);
+                }
+            }
+            else
+            {
+                // Pool isn't full yet, safe to create a new one
+                state.textureSnapshot = new RenderTexture(pl.texture.descriptor);
+            }
+
+            // Copy the new graphics directly over the recycled texture
+            Graphics.CopyTexture(pl.texture, state.textureSnapshot);
+            globalUndo.Add(state);
+        }
+    }
+
+    public void UndoActiveLayer()
+    {
+        if (globalUndo.Count == 0) return;
+
+        GlobalHistoryState undoState = globalUndo[globalUndo.Count - 1];
+        globalUndo.RemoveAt(globalUndo.Count - 1);
+
+        // Safety: If layer was deleted, destroy snapshot and skip to next undo
+        if (undoState.targetLayer == null || undoState.targetLayer.texture == null)
+        {
+            DestroyRT(undoState.textureSnapshot);
+            UndoActiveLayer(); 
+            return;
+        }
+
+        undoState.targetLayer.EnsureTextureAllocated();
+
+        // 1. Save current state to Redo
+        GlobalHistoryState redoState = new GlobalHistoryState();
+        redoState.targetLayer = undoState.targetLayer;
+        redoState.textureSnapshot = new RenderTexture(undoState.targetLayer.texture.descriptor);
+        Graphics.CopyTexture(undoState.targetLayer.texture, redoState.textureSnapshot);
+        globalRedo.Add(redoState);
+
+        // 2. Apply Undo
+        Graphics.CopyTexture(undoState.textureSnapshot, undoState.targetLayer.texture);
+        DestroyRT(undoState.textureSnapshot);
+
+        // 3. Auto-Switch to the layer/frame we just undid!
+        activeLayer = undoState.targetLayer;
+        UpdatePaintTarget(); 
+        compositionDirty = true;
+    }
+
+    public void RedoActiveLayer()
+    {
+        if (globalRedo.Count == 0) return;
+
+        GlobalHistoryState redoState = globalRedo[globalRedo.Count - 1];
+        globalRedo.RemoveAt(globalRedo.Count - 1);
+
+        if (redoState.targetLayer == null || redoState.targetLayer.texture == null)
+        {
+            DestroyRT(redoState.textureSnapshot);
+            RedoActiveLayer();
+            return;
+        }
+
+        redoState.targetLayer.EnsureTextureAllocated();
+
+        GlobalHistoryState undoState = new GlobalHistoryState();
+        undoState.targetLayer = redoState.targetLayer;
+        undoState.textureSnapshot = new RenderTexture(redoState.targetLayer.texture.descriptor);
+        Graphics.CopyTexture(redoState.targetLayer.texture, undoState.textureSnapshot);
+        globalUndo.Add(undoState);
+
+        Graphics.CopyTexture(redoState.textureSnapshot, redoState.targetLayer.texture);
+        DestroyRT(redoState.textureSnapshot);
+
+        activeLayer = redoState.targetLayer;
+        UpdatePaintTarget();
+        compositionDirty = true;
+    }
+
+    private void PurgeHistoryRecursive(LayerNode node)
+    {
+        if (node is PaintLayer pl)
+        {
+            globalUndo.RemoveAll(s => { if (s.targetLayer == pl) { DestroyRT(s.textureSnapshot); return true; } return false; });
+            globalRedo.RemoveAll(s => { if (s.targetLayer == pl) { DestroyRT(s.textureSnapshot); return true; } return false; });
+        }
+        else if (node is GroupLayer gl)
+        {
+            foreach (var child in gl.children) PurgeHistoryRecursive(child);
+        }
+    }
 }

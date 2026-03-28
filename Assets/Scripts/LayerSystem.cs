@@ -24,31 +24,17 @@ public abstract class LayerNode
 public class PaintLayer : LayerNode
 {
     public RenderTexture texture;
-    public List<RenderTexture> undoHistory = new List<RenderTexture>();
-    public List<RenderTexture> redoHistory = new List<RenderTexture>();
-
-    private int maxHistory = 30;
-    private int width, height; // Store dimensions for later
+    private int width, height;
 
     public PaintLayer(string name, int width, int height) : base(name)
     {
         this.width = width;
         this.height = height;
-
-        // MEMORY FIX: Reduce history size for 4K/8K textures to prevent crash
-        if (width > 2048 || height > 2048) maxHistory = 20;
-
-        // CRITICAL OPTIMIZATION: Do NOT create texture here (Lazy Allocation).
-        // It creates only when you actually paint or save.
     }
 
-    // --- COMPILER FIX: Added this method ---
     public void EnsureTextureAllocated()
     {
-        // If already exists, do nothing
         if (texture != null && texture.IsCreated()) return;
-
-        // Create texture now
         texture = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32);
         texture.enableRandomWrite = true;
         texture.Create();
@@ -63,63 +49,13 @@ public class PaintLayer : LayerNode
         RenderTexture.active = null;
     }
 
-    public void SaveState()
-    {
-        EnsureTextureAllocated(); // Ensure memory exists before using
-
-        RenderTexture snapshot = new RenderTexture(texture.descriptor);
-        Graphics.CopyTexture(texture, snapshot);
-        undoHistory.Add(snapshot);
-        redoHistory.Clear();
-
-        if (undoHistory.Count > maxHistory)
-        {
-            RenderTexture old = undoHistory[0];
-            undoHistory.RemoveAt(0);
-            if (old != null) old.Release();
-        }
-    }
-
-    public void Undo()
-    {
-        if (undoHistory.Count == 0) return;
-
-        EnsureTextureAllocated();
-
-        RenderTexture redoSnap = new RenderTexture(texture.descriptor);
-        Graphics.CopyTexture(texture, redoSnap);
-        redoHistory.Add(redoSnap);
-
-        RenderTexture lastState = undoHistory[undoHistory.Count - 1];
-        Graphics.CopyTexture(lastState, texture);
-
-        undoHistory.RemoveAt(undoHistory.Count - 1);
-        lastState.Release();
-    }
-
-    public void Redo()
-    {
-        if (redoHistory.Count == 0) return;
-
-        EnsureTextureAllocated();
-
-        RenderTexture undoSnap = new RenderTexture(texture.descriptor);
-        Graphics.CopyTexture(texture, undoSnap);
-        undoHistory.Add(undoSnap);
-
-        RenderTexture nextState = redoHistory[redoHistory.Count - 1];
-        Graphics.CopyTexture(nextState, texture);
-
-        redoHistory.RemoveAt(redoHistory.Count - 1);
-        nextState.Release();
-    }
-
     public override void Cleanup()
     {
-        if (texture != null) texture.Release();
-        foreach (var rt in undoHistory) if (rt) rt.Release();
-        foreach (var rt in redoHistory) if (rt) rt.Release();
-        undoHistory.Clear(); redoHistory.Clear();
+        if (texture != null)
+        {
+            texture.Release();
+            UnityEngine.Object.DestroyImmediate(texture);
+        }
     }
 }
 
