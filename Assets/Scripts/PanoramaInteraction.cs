@@ -158,19 +158,25 @@ public class PanoramaPaintGPU : MonoBehaviour
 
     void OnDestroy()
     {
-        if (displayTexture != null) displayTexture.Release();
-        if (linePreviewRT != null) linePreviewRT.Release();
-        // Reset cursor on exit
+        if (displayTexture != null) { displayTexture.Release(); DestroyImmediate(displayTexture); }
+        if (linePreviewRT != null) { linePreviewRT.Release(); DestroyImmediate(linePreviewRT); }
+        if (brushTexture != null) DestroyImmediate(brushTexture);
+        
         Cursor.SetCursor(null, Vector2.zero, CursorMode.Auto);
     }
 
     void InitializeGPUResources()
     {
-        if (sphereBrushShader != null)
-        {
-            sphereBrushMat = new Material(sphereBrushShader);
-        }
-        GenerateBrushTexture();
+        // --- PREVENT MATERIAL LEAKS ---
+        if (sphereBrushMat != null) DestroyImmediate(sphereBrushMat);
+        if (brushMaterial != null) DestroyImmediate(brushMaterial);
+        if (eraserMaterial != null) DestroyImmediate(eraserMaterial);
+        if (gridCompositeMat != null) DestroyImmediate(gridCompositeMat);
+
+        if (sphereBrushShader != null) sphereBrushMat = new Material(sphereBrushShader);
+        
+        GenerateBrushTexture(); // (Updated below to be safe)
+
         if (brushShader != null)
         {
             brushMaterial = new Material(brushShader);
@@ -186,9 +192,14 @@ public class PanoramaPaintGPU : MonoBehaviour
             gridCompositeMat = new Material(gridCompositeShader);
         }
 
-        // Create display texture for grid composite
+        // --- PREVENT RENDER TEXTURE LEAK ---
         if (projectionEffect.panoramaTexture != null)
         {
+            if (displayTexture != null)
+            {
+                displayTexture.Release();
+                DestroyImmediate(displayTexture);
+            }
             Texture source = projectionEffect.panoramaTexture;
             displayTexture = new RenderTexture(source.width, source.height, 0, RenderTextureFormat.ARGB32);
             displayTexture.Create();
@@ -356,7 +367,11 @@ public class PanoramaPaintGPU : MonoBehaviour
                     
                     if (linePreviewRT == null || linePreviewRT.width != targetTexture.width || linePreviewRT.height != targetTexture.height)
                     {
-                        if (linePreviewRT != null) linePreviewRT.Release();
+                        if (linePreviewRT != null) 
+                        { 
+                            linePreviewRT.Release(); 
+                            DestroyImmediate(linePreviewRT); // <--- PLUGGED
+                        }
                         linePreviewRT = new RenderTexture(targetTexture.width, targetTexture.height, 0, RenderTextureFormat.ARGB32);
                         linePreviewRT.Create();
                     }
@@ -591,7 +606,11 @@ public class PanoramaPaintGPU : MonoBehaviour
         // Ensure display texture matches source dimensions
         if (displayTexture == null || displayTexture.width != sourceComposite.width || displayTexture.height != sourceComposite.height)
         {
-            if (displayTexture != null) displayTexture.Release();
+            if (displayTexture != null) 
+            { 
+                displayTexture.Release(); 
+                DestroyImmediate(displayTexture); // <--- PLUGGED
+            }
             displayTexture = new RenderTexture(sourceComposite.width, sourceComposite.height, 0, RenderTextureFormat.ARGB32);
             displayTexture.Create();
         }
@@ -1013,6 +1032,9 @@ public class PanoramaPaintGPU : MonoBehaviour
 
     void GenerateBrushTexture()
     {
+        // --- PREVENT BRUSH TEXTURE LEAK ---
+        if (brushTexture != null) DestroyImmediate(brushTexture);
+
         int res = 128;
         brushTexture = new Texture2D(res, res, TextureFormat.ARGB32, false);
         Color[] colors = new Color[res * res];
