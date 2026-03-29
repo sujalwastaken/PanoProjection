@@ -100,7 +100,19 @@ public class PanoramaUI : MonoBehaviour
         DrawLabelWithShadow($"FPS: {Mathf.CeilToInt(fps)}");
         
         // --- RAM Display ---
-        DrawLabelWithShadow($"RAM: {MemoryTracker.Instance?.PrivateMemoryMB:F1} MB");
+        if (MemoryTracker.Instance != null && MemoryFailSafe.Instance != null)
+        {
+            float ramMB = MemoryTracker.Instance.PrivateMemoryMB;
+            float ramPct = MemoryTracker.Instance.RamUsagePercent;
+            
+            // Ask the Fail-Safe system if we are currently in the danger zone
+            bool isDanger = MemoryFailSafe.Instance.ShouldShowRamAsWarning();
+            
+            string colorTag = isDanger ? "<color=red>" : "";
+            string endTag = isDanger ? "</color>" : "";
+
+            DrawLabelWithShadow($"{colorTag}RAM: {ramMB:F1} MB ({ramPct:F1}%){endTag}");
+        }
 
         Vector3 rot = cam.transform.eulerAngles;
         float x = (rot.x > 180) ? rot.x - 360 : rot.x;

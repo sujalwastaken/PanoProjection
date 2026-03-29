@@ -15,10 +15,13 @@ public class PanoramaProjectIO : MonoBehaviour
     private bool isProcessing = false;
     private string processMessageBase = "";
     private string currentProjectPath = ""; 
+    private float saveLoadProgress = 0f; // Progress from 0 to 1
     
     [Header("Auto-Save")]
     public float autoSaveInterval = 60f; // 1 minute
     private float autoSaveTimer;
+    
+    private bool isEmergencyAutoSaving = false; // Prevents multiple concurrent emergency saves
 
     void Start()
     {
@@ -71,40 +74,83 @@ public class PanoramaProjectIO : MonoBehaviour
     {
         if (isProcessing)
         {
-            // UI ANIMATION: Bouncing dots based on time
-            int dots = Mathf.FloorToInt(Time.realtimeSinceStartup * 3f) % 4;
-            string animatedMessage = processMessageBase + new string('.', dots);
-
-            // --- TOP-MIDDLE NOTIFICATION DESIGN ---
-            float w = 220f; 
-            float h = 40f;
-            float topMargin = 20f; 
+            // --- PROGRESS BAR PANEL (Subtle, matches main UI) ---
+            float panelWidth = 250f;
+            float panelHeight = 50f;
+            float topMargin = 20f;
             
-            // Position: Centered horizontally, hugging the top
-            Rect rect = new Rect((Screen.width - w) / 2f, topMargin, w, h);
-
-            // --- THE FIX: Draw a completely flat, borderless background ---
+            Rect panelRect = new Rect((Screen.width - panelWidth) / 2f, topMargin, panelWidth, panelHeight);
+            
+            // Panel background - matches main UI color
             Color oldColor = GUI.color;
-            GUI.color = new Color(0.1f, 0.1f, 0.1f, 0.7f);
-            GUI.DrawTexture(rect, Texture2D.whiteTexture); 
+            GUI.color = new Color(0f, 0f, 0f, 0.5f); // Same as main UI
+            GUI.DrawTexture(panelRect, Texture2D.whiteTexture);
             GUI.color = oldColor;
-
-            // Notification Text Style
+            
+            // Text label - smaller and subtle
             GUIStyle labelStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 14,
+                fontSize = 11,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
-                normal = new GUIStyleState { textColor = new Color(0.9f, 0.9f, 0.9f, 1f) }
+                normal = new GUIStyleState { textColor = Color.white }
             };
             
-            // Draw the animated text inside the box
-            GUI.Label(rect, animatedMessage, labelStyle);
+            Rect labelRect = new Rect(panelRect.x, panelRect.y, panelRect.width, 20f);
+            string displayText = processMessageBase + " " + Mathf.RoundToInt(saveLoadProgress * 100f) + "%";
+            GUI.Label(labelRect, displayText, labelStyle);
+            
+            // Progress bar background - subtle gray
+            float barX = panelRect.x + 12f;
+            float barY = panelRect.y + 24f;
+            float barWidth = panelRect.width - 24f;
+            float barHeight = 10f;
+            
+            Rect barBG = new Rect(barX, barY, barWidth, barHeight);
+            GUI.color = new Color(0.15f, 0.15f, 0.15f, 1f); // Dark gray
+            GUI.DrawTexture(barBG, Texture2D.whiteTexture);
+            
+            // Progress fill - muted blue-gray (lowkey, not bright green)
+            Rect barFill = new Rect(barX + 1f, barY + 1f, (barWidth - 2f) * saveLoadProgress, barHeight - 2f);
+            GUI.color = new Color(0.4f, 0.6f, 0.7f, 0.8f); // Muted blue-gray
+            GUI.DrawTexture(barFill, Texture2D.whiteTexture);
+            GUI.color = oldColor;
         }
     }
 
     // ============================================================================================
-    //  ZERO-FREEZE SAVE SYSTEM (With Safety Swap)
+    //  PUBLIC METHOD: TRIGGER AUTO-SAVE (For Memory Fail-Safe System)
+    // ============================================================================================
+    
+    /// <summary>
+    /// Manually trigger auto-save from external systems (like MemoryFailSafe)
+    /// If project hasn't been saved yet, prompts user to save as a file first
+    /// Prevents multiple concurrent saves with a flag
+    /// </summary>
+    public void TriggerAutoSave()
+    {
+        if (isProcessing || isEmergencyAutoSaving) return;
+
+        // If not yet saved, prompt for save location
+        if (string.IsNullOrEmpty(currentProjectPath))
+        {
+            string path = SimpleFileBrowser.SaveFile("Save Project (Memory Fail-Safe)", "MyProject", "panon");
+            if (!string.IsNullOrEmpty(path))
+            {
+                isEmergencyAutoSaving = true;
+                StartCoroutine(SaveProjectRoutine(path, true));
+            }
+        }
+        else
+        {
+            // Already has a save path, do normal auto-save
+            isEmergencyAutoSaving = true;
+            StartCoroutine(SaveProjectRoutine(currentProjectPath, true));
+        }
+    }
+
+    // ============================================================================================
+    //  ZERO-FREEZE STREAMING SAVE SYSTEM (Large Project Safe)
     // ============================================================================================
     IEnumerator SaveProjectRoutine(string path, bool isAutoSave)
     {
@@ -112,10 +158,9 @@ public class PanoramaProjectIO : MonoBehaviour
         processMessageBase = isAutoSave ? "AUTO-SAVING" : "SAVING";
         yield return null; 
 
-        currentProjectPath = path; // Update tracking path
-        autoSaveTimer = autoSaveInterval; // Reset timer
+        currentProjectPath = path; 
+        autoSaveTimer = autoSaveInterval; 
 
-        // --- SAFETY SWAP SETUP ---
         string tempPath = path + ".tmp";
         string backupPath = path + ".bak";
 
@@ -167,89 +212,105 @@ public class PanoramaProjectIO : MonoBehaviour
             data.layers.Add(lData);
         }
 
-        string json = JsonUtility.ToJson(data, true);
-        byte[] jsonBytes = System.Text.Encoding.UTF8.GetBytes(json);
+        byte[] jsonBytes = System.Text.Encoding.UTF8.GetBytes(JsonUtility.ToJson(data, true));
 
-        // --- ASYNC GPU EXTRACTION ---
-        List<AsyncGPUReadbackRequest> requests = new List<AsyncGPUReadbackRequest>();
-        List<string> layerIds = new List<string>();
-        List<Vector2Int> dimensions = new List<Vector2Int>();
-        List<UnityEngine.Experimental.Rendering.GraphicsFormat> formats = new List<UnityEngine.Experimental.Rendering.GraphicsFormat>();
+        FileStream fs = null;
+        BinaryWriter writer = null;
+        bool saveFailed = false;
 
-        foreach (var pl in activePaintLayers)
+        try
         {
-            layerIds.Add(pl.id);
-            if (pl.texture != null)
-            {
-                dimensions.Add(new Vector2Int(pl.texture.width, pl.texture.height));
-                formats.Add(pl.texture.graphicsFormat);
-                requests.Add(AsyncGPUReadback.Request(pl.texture, 0, TextureFormat.RGBA32));
-            }
-            else
-            {
-                dimensions.Add(Vector2Int.zero);
-                formats.Add(UnityEngine.Experimental.Rendering.GraphicsFormat.None);
-                requests.Add(new AsyncGPUReadbackRequest()); // Dummy request
-            }
+            fs = new FileStream(tempPath, FileMode.Create);
+            writer = new BinaryWriter(fs);
+            writer.Write("PANON_V1");
+            writer.Write(jsonBytes.Length);
+            writer.Write(jsonBytes);
+            writer.Write(activePaintLayers.Count);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError("Failed to initialize save: " + e.Message);
+            if (writer != null) writer.Close();
+            if (fs != null) fs.Close();
+            isProcessing = false;
+            isEmergencyAutoSaving = false;
+            yield break;
         }
 
-        // Wait for GPU to finish packaging the pixels
-        while (requests.Any(r => !r.done && !r.hasError)) yield return null;
-
-        List<byte[]> rawPixelArrays = new List<byte[]>();
-        for (int i = 0; i < requests.Count; i++)
+        // --- THE FIX: STREAMING ARCHITECTURE ---
+        // Process one layer at a time to prevent memory spikes
+        for (int i = 0; i < activePaintLayers.Count; i++)
         {
-            if (dimensions[i] == Vector2Int.zero || requests[i].hasError) rawPixelArrays.Add(null);
-            else rawPixelArrays.Add(requests[i].GetData<byte>().ToArray());
-        }
+            PaintLayer pl = activePaintLayers[i];
 
-        // --- BACKGROUND THREAD ENCODING & WRITING ---
-        Task saveTask = Task.Run(() =>
-        {
-            // WRITE TO TEMP FILE INSTEAD OF MAIN FILE
-            using (FileStream fs = new FileStream(tempPath, FileMode.Create))
-            using (BinaryWriter writer = new BinaryWriter(fs))
+            // Update progress
+            saveLoadProgress = (float)i / activePaintLayers.Count;
+
+            if (pl.texture == null)
             {
-                writer.Write("PANON_V1");
-                writer.Write(jsonBytes.Length);
-                writer.Write(jsonBytes);
-                writer.Write(layerIds.Count);
+                writer.Write(pl.id);
+                writer.Write(0);
+                yield return null; 
+                continue;
+            }
 
-                for (int i = 0; i < layerIds.Count; i++)
-                {
-                    writer.Write(layerIds[i]);
+            // 1. Pull data from GPU
+            var req = AsyncGPUReadback.Request(pl.texture, 0, TextureFormat.RGBA32);
+            while (!req.done) yield return null; // Keep UI responsive
 
-                    if (rawPixelArrays[i] == null)
-                    {
-                        writer.Write(0); 
-                    }
-                    else
-                    {
-                        byte[] pngBytes = ImageConversion.EncodeArrayToPNG(
-                            rawPixelArrays[i], formats[i], (uint)dimensions[i].x, (uint)dimensions[i].y);
-                        
-                        writer.Write(pngBytes.Length);
-                        writer.Write(pngBytes);
-                    }
+            if (req.hasError)
+            {
+                writer.Write(pl.id);
+                writer.Write(0);
+                continue;
+            }
+
+            // 2. Allocate RAM for exactly ONE layer
+            byte[] rawBytes = req.GetData<byte>().ToArray();
+            int w = pl.texture.width;
+            int h = pl.texture.height;
+            var format = pl.texture.graphicsFormat;
+            
+            yield return null; // Breathe after RAM allocation
+
+            // 3. Compress and Write on Background Thread
+            string layerId = pl.id;
+            Task writeTask = Task.Run(() => {
+                try {
+                    byte[] pngBytes = ImageConversion.EncodeArrayToPNG(rawBytes, format, (uint)w, (uint)h);
+                    writer.Write(layerId);
+                    writer.Write(pngBytes.Length);
+                    writer.Write(pngBytes);
+                } catch {
+                    saveFailed = true;
                 }
-            }
-        });
+            });
 
-        // Wait for background thread to finish writing to hard drive
-        while (!saveTask.IsCompleted) yield return null;
+            while (!writeTask.IsCompleted) yield return null;
+
+            if (saveFailed) break;
+
+            // 4. Critical: Release the RAM before moving to the next layer
+            rawBytes = null;
+            yield return null; 
+        }
+
+        // Set progress to complete
+        saveLoadProgress = 1f;
+        yield return null;
+
+        try { if (writer != null) writer.Close(); if (fs != null) fs.Close(); } catch { }
 
         // --- SAFETY SWAP EXECUTION ---
-        if (saveTask.IsFaulted) 
+        if (saveFailed) 
         {
-            Debug.LogError("Save Failed: " + saveTask.Exception.Message);
-            // Delete the bad temp file so it doesn't clutter the drive
+            Debug.LogError("Save aborted to protect original file.");
             if (File.Exists(tempPath)) File.Delete(tempPath);
         }
         else 
         {
             try
             {
-                // Swap the .tmp file to be the real file
                 if (File.Exists(path))
                 {
                     if (File.Exists(backupPath)) File.Delete(backupPath);
@@ -259,15 +320,14 @@ public class PanoramaProjectIO : MonoBehaviour
                 {
                     File.Move(tempPath, path);
                 }
-                Debug.Log("Safe Save Complete: " + path);
+                Debug.Log("Streaming Save Complete: " + path);
             }
-            catch (System.Exception e)
-            {
-                Debug.LogError("Safety Swap Failed: " + e.Message);
-            }
+            catch (System.Exception e) { Debug.LogError("Safety Swap Failed: " + e.Message); }
         }
         
         isProcessing = false;
+        isEmergencyAutoSaving = false;
+        saveLoadProgress = 0f; // Reset progress bar
     }
 
     void TraverseTree(LayerNode node, List<LayerNode> list)
@@ -277,7 +337,7 @@ public class PanoramaProjectIO : MonoBehaviour
     }
 
     // ============================================================================================
-    //  SMOOTH LOAD SYSTEM (Compiler Safe)
+    //  SMOOTH LOAD SYSTEM (Background I/O for Large Projects)
     // ============================================================================================
     IEnumerator LoadProjectRoutine(string path)
     {
@@ -289,166 +349,173 @@ public class PanoramaProjectIO : MonoBehaviour
 
         currentProjectPath = path;
         
-        ProjectData data = null;
+        string jsonString = "";
         List<string> texIds = new List<string>();
         List<byte[]> texBytes = new List<byte[]>();
-        bool loadSuccess = false;
+        bool loadFailed = false;
 
-        // --- STEP 1: READ FILE SYNCHRONOUSLY (Inside Try/Catch) ---
-        try
+        // --- THE FIX: BACKGROUND DISK I/O ---
+        // Push the file reading to a background thread to prevent massive file reads from freezing Unity
+        Task readTask = Task.Run(() => 
         {
-            using (FileStream fs = new FileStream(path, FileMode.Open))
-            using (BinaryReader reader = new BinaryReader(fs))
+            try
             {
-                string header = reader.ReadString();
-                if (header != "PANON_V1") { Debug.LogError("Invalid format!"); isProcessing = false; yield break; }
-
-                int jsonLen = reader.ReadInt32();
-                byte[] jsonBytes = reader.ReadBytes(jsonLen);
-                string json = System.Text.Encoding.UTF8.GetString(jsonBytes);
-                data = JsonUtility.FromJson<ProjectData>(json);
-
-                int texCount = reader.ReadInt32();
-                for (int i = 0; i < texCount; i++)
+                using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read))
+                using (BinaryReader reader = new BinaryReader(fs))
                 {
-                    string id = reader.ReadString();
-                    int len = reader.ReadInt32();
-                    if (len > 0)
+                    string header = reader.ReadString();
+                    if (header != "PANON_V1") throw new System.Exception("Invalid format!");
+
+                    int jsonLen = reader.ReadInt32();
+                    byte[] jsonBytesArr = reader.ReadBytes(jsonLen);
+                    jsonString = System.Text.Encoding.UTF8.GetString(jsonBytesArr);
+
+                    int texCount = reader.ReadInt32();
+                    for (int i = 0; i < texCount; i++)
                     {
-                        texIds.Add(id);
-                        texBytes.Add(reader.ReadBytes(len));
+                        texIds.Add(reader.ReadString());
+                        int len = reader.ReadInt32();
+                        if (len > 0) texBytes.Add(reader.ReadBytes(len));
+                        else texBytes.Add(null);
                     }
                 }
             }
-            loadSuccess = true;
-        }
-        catch (System.Exception e) 
+            catch (System.Exception e)
+            {
+                Debug.LogError("Background File Read Failed: " + e.Message);
+                loadFailed = true;
+            }
+        });
+
+        // Yield while hard drive does the heavy lifting
+        while (!readTask.IsCompleted) yield return null;
+
+        if (loadFailed || string.IsNullOrEmpty(jsonString)) 
         { 
-            Debug.LogError("Load Failed: " + e.Message); 
-            isProcessing = false;
-            yield break;
+            isProcessing = false; 
+            yield break; 
         }
 
-        // --- STEP 2: BUILD HIERARCHY & UPLOAD TO GPU (Outside Try/Catch, Safe to Yield!) ---
-        if (loadSuccess && data != null)
+        ProjectData data = JsonUtility.FromJson<ProjectData>(jsonString);
+
+        // --- STEP 2: BUILD HIERARCHY & UPLOAD TO GPU ---
+        if (manager.root != null) manager.root.Cleanup();
+        manager.root = null;
+        manager.activeLayer = null;
+
+        manager.fps = data.fps;
+        manager.totalFrames = data.totalFrames;
+        manager.exportWidth = data.exportWidth;
+        manager.exportHeight = data.exportHeight;
+
+        Dictionary<string, LayerNode> idToNode = new Dictionary<string, LayerNode>();
+
+        foreach (var lData in data.layers)
         {
-            if (manager.root != null) manager.root.Cleanup();
-            manager.root = null;
-            manager.activeLayer = null;
-
-            manager.fps = data.fps;
-            manager.totalFrames = data.totalFrames;
-            manager.exportWidth = data.exportWidth;
-            manager.exportHeight = data.exportHeight;
-
-            Dictionary<string, LayerNode> idToNode = new Dictionary<string, LayerNode>();
-
-            // 1. Create Nodes
-            foreach (var lData in data.layers)
+            LayerNode node = null;
+            if (lData.type == "Paint")
             {
-                LayerNode node = null;
-                if (lData.type == "Paint")
+                int w = (lData.width > 0) ? lData.width : 2048;
+                int h = (lData.height > 0) ? lData.height : 1024;
+                node = new PaintLayer(lData.name, w, h);
+            }
+            else if (lData.type == "Group") node = new GroupLayer(lData.name);
+            else if (lData.type == "Animation")
+            {
+                var al = new AnimationLayer(lData.name);
+                if (lData.animTimelineKeys != null)
                 {
-                    int w = (lData.width > 0) ? lData.width : 2048;
-                    int h = (lData.height > 0) ? lData.height : 1024;
-                    node = new PaintLayer(lData.name, w, h);
+                    for (int i = 0; i < lData.animTimelineKeys.Count; i++)
+                        al.timelineMap[lData.animTimelineKeys[i]] = lData.animTimelineValues[i];
                 }
-                else if (lData.type == "Group") node = new GroupLayer(lData.name);
-                else if (lData.type == "Animation")
-                {
-                    var al = new AnimationLayer(lData.name);
-                    if (lData.animTimelineKeys != null)
-                    {
-                        for (int i = 0; i < lData.animTimelineKeys.Count; i++)
-                            al.timelineMap[lData.animTimelineKeys[i]] = lData.animTimelineValues[i];
-                    }
-                    node = al;
-                }
-                else if (lData.type == "Camera")
-                {
-                    var cl = new CameraLayer(lData.name);
-                    cl.curvePitch = SerializerHelper.DataToCurve(lData.curvePitch);
-                    cl.curveYaw = SerializerHelper.DataToCurve(lData.curveYaw);
-                    cl.curveRoll = SerializerHelper.DataToCurve(lData.curveRoll);
-                    cl.curveZoom = SerializerHelper.DataToCurve(lData.curveZoom);
-                    cl.curveFisheye = SerializerHelper.DataToCurve(lData.curveFisheye);
-                    node = cl;
-                }
-
-                if (node != null)
-                {
-                    node.id = lData.id;
-                    node.isVisible = lData.isVisible;
-                    node.opacity = lData.opacity;
-                    node.expanded = lData.expanded;
-                    idToNode[lData.id] = node;
-                }
+                node = al;
+            }
+            else if (lData.type == "Camera")
+            {
+                var cl = new CameraLayer(lData.name);
+                cl.curvePitch = SerializerHelper.DataToCurve(lData.curvePitch);
+                cl.curveYaw = SerializerHelper.DataToCurve(lData.curveYaw);
+                cl.curveRoll = SerializerHelper.DataToCurve(lData.curveRoll);
+                cl.curveZoom = SerializerHelper.DataToCurve(lData.curveZoom);
+                cl.curveFisheye = SerializerHelper.DataToCurve(lData.curveFisheye);
+                node = cl;
             }
 
-            // 2. Link Parents
-            foreach (var lData in data.layers)
+            if (node != null)
             {
-                if (!idToNode.ContainsKey(lData.id)) continue;
-                LayerNode node = idToNode[lData.id];
-
-                if (string.IsNullOrEmpty(lData.parentId))
-                {
-                    if (node is GroupLayer gl && node.name == "Root") manager.root = gl;
-                }
-                else if (idToNode.ContainsKey(lData.parentId))
-                {
-                    LayerNode parent = idToNode[lData.parentId];
-                    if (parent is GroupLayer pg) { node.parent = pg; pg.children.Add(node); }
-                }
+                node.id = lData.id;
+                node.isVisible = lData.isVisible;
+                node.opacity = lData.opacity;
+                node.expanded = lData.expanded;
+                idToNode[lData.id] = node;
             }
-
-            if (manager.root == null) manager.root = new GroupLayer("Root");
-
-            // 3. Upload Textures incrementally to prevent freezing
-            for (int i = 0; i < texIds.Count; i++)
-            {
-                string id = texIds[i];
-                byte[] pngBytes = texBytes[i];
-
-                if (idToNode.ContainsKey(id) && idToNode[id] is PaintLayer pl)
-                {
-                    // --- FIX 1: Disable MipMaps on the temporary decoder texture ---
-                    // The 'false' parameter stops Unity from generating blurry downscaled versions
-                    Texture2D tex = new Texture2D(2, 2, TextureFormat.RGBA32, false); 
-                    tex.filterMode = FilterMode.Bilinear; // Use FilterMode.Point if you want hard pixel-art edges
-                    tex.wrapMode = TextureWrapMode.Clamp;
-                    tex.LoadImage(pngBytes);
-
-                    pl.EnsureTextureAllocated();
-                    if (pl.texture.width != tex.width || pl.texture.height != tex.height)
-                    {
-                        if (pl.texture != null) pl.texture.Release();
-                        
-                        pl.texture = new RenderTexture(tex.width, tex.height, 0, RenderTextureFormat.ARGB32);
-                        pl.texture.enableRandomWrite = true;
-                        
-                        // --- FIX 2: Apply crisp settings to the actual Canvas layer ---
-                        pl.texture.useMipMap = false; // Crucial: Stops the canvas from blurring when zoomed out
-                        pl.texture.autoGenerateMips = false;
-                        pl.texture.filterMode = FilterMode.Point; // Again, use .Point for sharp pixel-art
-                        pl.texture.wrapMode = TextureWrapMode.Clamp; // Prevents strokes from wrapping across the screen edges
-                        
-                        pl.texture.Create();
-                    }
-
-                    Graphics.Blit(tex, pl.texture);
-                    Destroy(tex);
-                    
-                    yield return null; 
-                }
-            }
-
-            manager.activeLayer = manager.root;
-            manager.compositionDirty = true;
-            Debug.Log("Load Complete!");
         }
 
-        isProcessing = false; 
+        foreach (var lData in data.layers)
+        {
+            if (!idToNode.ContainsKey(lData.id)) continue;
+            LayerNode node = idToNode[lData.id];
+
+            if (string.IsNullOrEmpty(lData.parentId))
+            {
+                if (node is GroupLayer gl && node.name == "Root") manager.root = gl;
+            }
+            else if (idToNode.ContainsKey(lData.parentId))
+            {
+                LayerNode parent = idToNode[lData.parentId];
+                if (parent is GroupLayer pg) { node.parent = pg; pg.children.Add(node); }
+            }
+        }
+
+        if (manager.root == null) manager.root = new GroupLayer("Root");
+
+        // Upload Textures incrementally (Main Thread, but spaced out)
+        for (int i = 0; i < texIds.Count; i++)
+        {
+            string id = texIds[i];
+            byte[] pngBytes = texBytes[i];
+
+            // Update progress
+            saveLoadProgress = (float)i / texIds.Count;
+
+            if (idToNode.ContainsKey(id) && idToNode[id] is PaintLayer pl)
+            {
+                Texture2D tex = new Texture2D(2, 2, TextureFormat.RGBA32, false); 
+                tex.filterMode = FilterMode.Point; 
+                tex.wrapMode = TextureWrapMode.Clamp;
+                tex.LoadImage(pngBytes);
+
+                pl.EnsureTextureAllocated();
+                if (pl.texture.width != tex.width || pl.texture.height != tex.height)
+                {
+                    if (pl.texture != null) pl.texture.Release();
+                    
+                    pl.texture = new RenderTexture(tex.width, tex.height, 0, RenderTextureFormat.ARGB32);
+                    pl.texture.enableRandomWrite = true;
+                    pl.texture.useMipMap = false; 
+                    pl.texture.autoGenerateMips = false;
+                    pl.texture.filterMode = FilterMode.Point; 
+                    pl.texture.wrapMode = TextureWrapMode.Clamp; 
+                    pl.texture.Create();
+                }
+
+                Graphics.Blit(tex, pl.texture);
+                Destroy(tex);
+                
+                yield return null; 
+            }
+        }
+
+        // Set progress to complete
+        saveLoadProgress = 1f;
+        yield return null;
+
+        manager.activeLayer = manager.root;
+        manager.compositionDirty = true;
+        Debug.Log("Streaming Load Complete!");
+
+        isProcessing = false;
+        saveLoadProgress = 0f; // Reset progress bar
     }
 }
 

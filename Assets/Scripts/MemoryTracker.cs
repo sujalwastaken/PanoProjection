@@ -10,6 +10,9 @@ public class MemoryTracker : MonoBehaviour
 
     public float WorkingSetMB { get; private set; }
     public float PrivateMemoryMB { get; private set; }
+    
+    public float TotalRamMB { get; private set; }
+    public float RamUsagePercent { get; private set; }
 
     [DllImport("psapi.dll")]
     private static extern bool GetProcessMemoryInfo(System.IntPtr hProcess, out PROCESS_MEMORY_COUNTERS counters, uint size);
@@ -36,15 +39,19 @@ public class MemoryTracker : MonoBehaviour
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
         DontDestroyOnLoad(gameObject);
+
+        // Get total physical memory of the computer (in Megabytes)
+        TotalRamMB = SystemInfo.systemMemorySize;
     }
 
     void Update()
     {
         if (frameCounter++ % updateEveryNFrames == 0)
-            Refresh();
+            ForceRefresh();
     }
 
-    private void Refresh()
+    // Made public so the Fail-Safe can instantly check memory after deleting history
+    public void ForceRefresh()
     {
         try
         {
@@ -55,6 +62,9 @@ public class MemoryTracker : MonoBehaviour
             {
                 WorkingSetMB = pmc.WorkingSetSize / 1048576f;
                 PrivateMemoryMB = pmc.PagefileUsage / 1048576f;
+                
+                // Calculate current percentage
+                RamUsagePercent = (PrivateMemoryMB / TotalRamMB) * 100f;
             }
         }
         catch { }

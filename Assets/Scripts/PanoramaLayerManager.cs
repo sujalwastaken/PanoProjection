@@ -826,4 +826,50 @@ public class PanoramaLayerManager : MonoBehaviour
             foreach (var child in gl.children) PurgeHistoryRecursive(child);
         }
     }
+
+    // --- MEMORY FAIL-SAFE HISTORY METHODS ---
+
+    /// <summary>
+    /// Returns the number of undo states currently stored
+    /// </summary>
+    public int GetUndoHistoryCount()
+    {
+        return globalUndo.Count;
+    }
+
+    /// <summary>
+    /// Returns the number of redo states currently stored
+    /// </summary>
+    public int GetRedoHistoryCount()
+    {
+        return globalRedo.Count;
+    }
+
+    /// <summary>
+    /// Clears the oldest undo state to free memory
+    /// Called by MemoryFailSafe when RAM is critical
+    /// </summary>
+    public void ClearOldestUndoState()
+    {
+        if (globalUndo.Count > 0)
+        {
+            GlobalHistoryState oldest = globalUndo[0];
+            DestroyRT(oldest.textureSnapshot);
+            globalUndo.RemoveAt(0);
+        }
+    }
+
+    /// <summary>
+    /// Clears the oldest redo state to free memory
+    /// Called by MemoryFailSafe when RAM is critical
+    /// </summary>
+    public void ClearOldestRedoState()
+    {
+        if (globalRedo.Count > 0)
+        {
+            GlobalHistoryState oldest = globalRedo[0];
+            DestroyRT(oldest.textureSnapshot);
+            globalRedo.RemoveAt(0);
+        }
+    }
 }
