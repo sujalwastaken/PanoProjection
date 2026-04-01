@@ -406,7 +406,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   historyEntriesPerFrame: 1
   checkIntervalSeconds: 0.1
-  thresholdPercent: 75
+  thresholdPercent: 80
+  criticalBlockPercent: 90
 --- !u!1 &1991774024
 GameObject:
   m_ObjectHideFlags: 1

@@ -15,6 +15,7 @@ public class MemoryFailSafe : MonoBehaviour
     [Range(1, 20)] public int historyEntriesPerFrame = 2; // How many undo/redo entries to clear per frame when over threshold
     [Range(0.1f, 5f)] public float checkIntervalSeconds = 1f; // How often to check RAM
     [Range(5f, 95f)] public float thresholdPercent = 80f; // The Fail-Safe Threshold!
+    [Range(5f, 98f)] public float criticalBlockPercent = 90f;
 
     private PanoramaLayerManager layerManager;
     private PanoramaProjectIO projectIO;
@@ -125,5 +126,31 @@ public class MemoryFailSafe : MonoBehaviour
             Debug.Log($"[MemoryFailSafe] RAM recovered below threshold: {currentRamPercent:F1}% < {thresholdPercent:F1}%");
             Debug.Log("[MemoryFailSafe] Cleanup suspended.");
         }
+    }
+    
+    public bool IsSafeToAllocate()
+    {
+        if (memoryTracker == null || layerManager == null) return true;
+
+        // 1. Force a real-time RAM check right this millisecond
+        memoryTracker.ForceRefresh();
+
+        // 2. If we are under the critical limit, go ahead!
+        if (memoryTracker.RamUsagePercent < criticalBlockPercent) return true;
+
+        // 3. We are CRITICAL. Try a desperate last-second purge.
+        Debug.LogWarning("[Memory Gatekeeper] CRITICAL RAM! Attempting emergency purge before allocation...");
+        
+        bool purgedSomething = layerManager.ClearOneHistoryEntry();
+        if (purgedSomething)
+        {
+            memoryTracker.ForceRefresh();
+            // Did the purge save us?
+            if (memoryTracker.RamUsagePercent < criticalBlockPercent) return true;
+        }
+
+        // 4. We are out of memory and out of history. BLOCK THE ALLOCATION.
+        Debug.LogError("[Memory Gatekeeper] ALLOCATION DENIED. System is maxed out. Prevented a fatal crash.");
+        return false; 
     }
 }

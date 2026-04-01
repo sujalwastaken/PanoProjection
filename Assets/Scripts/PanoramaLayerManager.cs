@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.Rendering;
+using Debug = UnityEngine.Debug;
 
 [RequireComponent(typeof(PanoramaProjectionEffect))]
 [RequireComponent(typeof(PanoramaPaintGPU))]
@@ -591,18 +592,35 @@ public class PanoramaLayerManager : MonoBehaviour
     {
         int w = fullWidth; int h = fullHeight;
         LayerNode newNode = null;
+
         switch (type)
         {
-            case LayerType.Paint: newNode = new PaintLayer($"Layer {paintCount++}", w, h); break;
+            case LayerType.Paint: 
+                // Stop the user from making a new layer if RAM is critically full
+                if (!SafeAllocator.CanAllocate())
+                {
+                    Debug.LogWarning("Cannot create new Paint Layer. RAM is critically full.");
+                    return; 
+                }
+                newNode = new PaintLayer($"Layer {paintCount++}", w, h); 
+                break;
             case LayerType.Folder: newNode = new GroupLayer($"Folder {groupCount++}"); break;
             case LayerType.Animation: newNode = new AnimationLayer($"Anim {animCount++}"); break;
             case LayerType.Camera: newNode = new CameraLayer($"Cam {camCount++}"); break;
         }
-        if (newNode == null) return; GroupLayer targetGroup = root;
+
+        if (newNode == null) return; 
+        
+        GroupLayer targetGroup = root;
         if (activeLayer != null) { if (activeLayer is GroupLayer group) targetGroup = group; else if (activeLayer.parent is GroupLayer parentGroup) targetGroup = parentGroup; }
-        newNode.parent = targetGroup; targetGroup.children.Add(newNode);
+        
+        newNode.parent = targetGroup; 
+        targetGroup.children.Add(newNode);
+        
         if (targetGroup is AnimationLayer animLayer) { int childIndex = targetGroup.children.Count - 1; animLayer.SetCell(currentFrame, childIndex); newNode.name = (childIndex + 1).ToString(); }
-        activeLayer = newNode; compositionDirty = true;
+        
+        activeLayer = newNode; 
+        compositionDirty = true;
     }
     public void DeleteActiveLayer()
     {
@@ -714,50 +732,53 @@ public class PanoramaLayerManager : MonoBehaviour
         if (activeLayer is PaintLayer pl)
         {
             pl.EnsureTextureAllocated();
+            if (pl.texture == null) return; // Failsafe check
 
-            // Clear redo on new action
             foreach (var s in globalRedo) DestroyRT(s.textureSnapshot);
             globalRedo.Clear();
 
             GlobalHistoryState state = new GlobalHistoryState();
             state.targetLayer = pl;
 
-            // --- THE RECYCLING POOL FIX ---
             if (globalUndo.Count >= maxGlobalHistory)
             {
-                // 1. Steal the oldest snapshot's wrapper instead of destroying it
                 GlobalHistoryState oldest = globalUndo[0];
                 globalUndo.RemoveAt(0);
                 
-                state.textureSnapshot = oldest.textureSnapshot; // Reuse the 134MB block!
+                state.textureSnapshot = oldest.textureSnapshot; 
                 
-                // Safety: If dimensions changed (e.g. from a 4K layer to an 8K layer), we must reallocate
                 if (state.textureSnapshot.width != pl.texture.width || state.textureSnapshot.height != pl.texture.height)
                 {
                     DestroyRT(state.textureSnapshot);
-                    state.textureSnapshot = new RenderTexture(pl.texture.descriptor);
+                    // Use SafeAllocator!
+                    state.textureSnapshot = SafeAllocator.RequestRenderTexture(pl.texture.descriptor);
                 }
             }
             else
             {
-                // Pool isn't full yet, safe to create a new one
-                state.textureSnapshot = new RenderTexture(pl.texture.descriptor);
+                // Use SafeAllocator!
+                state.textureSnapshot = SafeAllocator.RequestRenderTexture(pl.texture.descriptor);
             }
 
-            // Copy the new graphics directly over the recycled texture
+            // If the Factory denied the allocation, silently skip saving this undo state to keep the app alive
+            if (state.textureSnapshot == null) 
+            {
+                Debug.LogWarning("Undo state skipped to protect system memory.");
+                return; 
+            }
+
             Graphics.CopyTexture(pl.texture, state.textureSnapshot);
             globalUndo.Add(state);
         }
     }
 
-    public void UndoActiveLayer()
+public void UndoActiveLayer()
     {
         if (globalUndo.Count == 0) return;
 
         GlobalHistoryState undoState = globalUndo[globalUndo.Count - 1];
         globalUndo.RemoveAt(globalUndo.Count - 1);
 
-        // Safety: If layer was deleted, destroy snapshot and skip to next undo
         if (undoState.targetLayer == null || undoState.targetLayer.texture == null)
         {
             DestroyRT(undoState.textureSnapshot);
@@ -767,18 +788,26 @@ public class PanoramaLayerManager : MonoBehaviour
 
         undoState.targetLayer.EnsureTextureAllocated();
 
-        // 1. Save current state to Redo
-        GlobalHistoryState redoState = new GlobalHistoryState();
-        redoState.targetLayer = undoState.targetLayer;
-        redoState.textureSnapshot = new RenderTexture(undoState.targetLayer.texture.descriptor);
-        Graphics.CopyTexture(undoState.targetLayer.texture, redoState.textureSnapshot);
-        globalRedo.Add(redoState);
+        // 1. Save current state to Redo (Using SafeAllocator)
+        RenderTexture redoTex = SafeAllocator.RequestRenderTexture(undoState.targetLayer.texture.descriptor);
+        
+        if (redoTex != null)
+        {
+            GlobalHistoryState redoState = new GlobalHistoryState();
+            redoState.targetLayer = undoState.targetLayer;
+            redoState.textureSnapshot = redoTex;
+            Graphics.CopyTexture(undoState.targetLayer.texture, redoState.textureSnapshot);
+            globalRedo.Add(redoState);
+        }
+        else
+        {
+            Debug.LogWarning("Skipping Redo state creation to free up memory for the Undo operation.");
+        }
 
         // 2. Apply Undo
         Graphics.CopyTexture(undoState.textureSnapshot, undoState.targetLayer.texture);
         DestroyRT(undoState.textureSnapshot);
 
-        // 3. Auto-Switch to the layer/frame we just undid!
         activeLayer = undoState.targetLayer;
         UpdatePaintTarget(); 
         compositionDirty = true;
@@ -800,12 +829,23 @@ public class PanoramaLayerManager : MonoBehaviour
 
         redoState.targetLayer.EnsureTextureAllocated();
 
-        GlobalHistoryState undoState = new GlobalHistoryState();
-        undoState.targetLayer = redoState.targetLayer;
-        undoState.textureSnapshot = new RenderTexture(redoState.targetLayer.texture.descriptor);
-        Graphics.CopyTexture(redoState.targetLayer.texture, undoState.textureSnapshot);
-        globalUndo.Add(undoState);
+        // 1. Save current state back to Undo (Using SafeAllocator)
+        RenderTexture undoTex = SafeAllocator.RequestRenderTexture(redoState.targetLayer.texture.descriptor);
 
+        if (undoTex != null)
+        {
+            GlobalHistoryState undoState = new GlobalHistoryState();
+            undoState.targetLayer = redoState.targetLayer;
+            undoState.textureSnapshot = undoTex;
+            Graphics.CopyTexture(redoState.targetLayer.texture, undoState.textureSnapshot);
+            globalUndo.Add(undoState);
+        }
+        else
+        {
+            Debug.LogWarning("Skipping Undo state creation to force the Redo operation.");
+        }
+
+        // 2. Apply Redo
         Graphics.CopyTexture(redoState.textureSnapshot, redoState.targetLayer.texture);
         DestroyRT(redoState.textureSnapshot);
 
@@ -871,5 +911,34 @@ public class PanoramaLayerManager : MonoBehaviour
             DestroyRT(oldest.textureSnapshot);
             globalRedo.RemoveAt(0);
         }
+    }
+    /// <summary>
+    /// Master hook for the Fail-Safe. Clears exactly one state (prioritizing Redo) and flushes RAM.
+    /// </summary>
+    public bool ClearOneHistoryEntry()
+    {
+        bool freedSomething = false;
+
+        // 1. Try to sacrifice a Redo state first (least important)
+        if (globalRedo.Count > 0)
+        {
+            ClearOldestRedoState();
+            freedSomething = true;
+        }
+        // 2. Otherwise, sacrifice the oldest Undo state
+        else if (globalUndo.Count > 0)
+        {
+            ClearOldestUndoState();
+            freedSomething = true;
+        }
+
+        // Force Unity to immediately tell the OS that this memory is free
+        if (freedSomething)
+        {
+            System.GC.Collect();
+            Resources.UnloadUnusedAssets();
+        }
+
+        return freedSomething;
     }
 }

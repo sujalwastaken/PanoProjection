@@ -63,11 +63,12 @@ public class PaintLayer : LayerNode
     {
         if (texture != null && texture.IsCreated()) return;
 
-        texture = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32);
-        texture.enableRandomWrite = true;
-        texture.filterMode = FilterMode.Point; // Keeps strokes crisp
-        texture.useMipMap = false;             // Prevents zoom-blur
-        texture.Create();
+        // Ask the global factory for a texture
+        texture = SafeAllocator.RequestRenderTexture(width, height);
+        
+        // If the Bouncer blocked it, stop here!
+        if (texture == null) return; 
+
         ClearTexture();
     }
 

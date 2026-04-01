@@ -105,11 +105,20 @@ public class PanoramaUI : MonoBehaviour
             float ramMB = MemoryTracker.Instance.PrivateMemoryMB;
             float ramPct = MemoryTracker.Instance.RamUsagePercent;
             
-            // Ask the Fail-Safe system if we are currently in the danger zone
-            bool isDanger = MemoryFailSafe.Instance.ShouldShowRamAsWarning();
-            
-            string colorTag = isDanger ? "<color=red>" : "";
-            string endTag = isDanger ? "</color>" : "";
+            string colorTag = "";
+            string endTag = "";
+
+            // Only apply color tags if we cross the thresholds
+            if (ramPct >= MemoryFailSafe.Instance.criticalBlockPercent) 
+            {
+                colorTag = "<color=red>";
+                endTag = "</color>";
+            }
+            else if (ramPct >= MemoryFailSafe.Instance.thresholdPercent) 
+            {
+                colorTag = "<color=yellow>";
+                endTag = "</color>";
+            }
 
             DrawLabelWithShadow($"{colorTag}RAM: {ramMB:F1} MB ({ramPct:F1}%){endTag}");
         }
