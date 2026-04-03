@@ -277,7 +277,7 @@ MonoBehaviour:
   showGrid: 1
   gridRotation: {x: 0, y: 0, z: 0}
   gridSubdivisions: 2
-  activeGridAxis: 0
+  activeGridAxis: 2
   gridFalloff: 0.3
   gridThickness: 0.1
   gridOpacity: 1
