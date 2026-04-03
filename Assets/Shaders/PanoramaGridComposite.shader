@@ -10,12 +10,12 @@ Shader "Hidden/PanoramaGridComposite"
         _Subdivisions ("Subdivisions", Float) = 8.0
         _Thickness ("Thickness", Float) = 1.0
         _Opacity ("Opacity", Float) = 0.5
-        _Falloff ("Grid Falloff", Float) = 0.15 // NEW: Fades lines at the horizon
+        _Falloff ("Grid Falloff", Float) = 0.15 
         _UseGrid ("Use Grid", Float) = 0.0
         _ShowDiagonals ("Show Diagonals", Float) = 0.0
         _GridAxisMode ("Grid Axis Mode", Float) = 0.0
         _GhostNormal ("Ghost Normal", Vector) = (0,0,0,0)
-        _TargetVP ("Target VP", Vector) = (0,0,0,0) // NEW: For the Snapping Ring
+        _TargetVP ("Target VP", Vector) = (0,0,0,0)
     }
     SubShader
     {
@@ -44,10 +44,32 @@ Shader "Hidden/PanoramaGridComposite"
                 return float3(cosLat * sin(lon), sin(lat), cosLat * cos(lon));
             }
 
-            void DrawVP(float3 rayDir, float3 vpDir, fixed4 color, float radius, inout fixed4 layer) {
-                float angle = acos(clamp(abs(dot(rayDir, normalize(vpDir))), 0.0, 1.0));
-                float dotAlpha = smoothstep(radius, radius * 0.8, angle);
-                layer = max(layer, dotAlpha * color);
+            // --- FIXED: 100% SOLID PLUS SIGNS ---
+            void DrawPlusVP(float3 localDir, float3 vpDir, fixed4 color, float size, inout fixed4 vpLayer) {
+                float angle = acos(clamp(abs(dot(localDir, normalize(vpDir))), 0.0, 1.0));
+                if (angle > size) return;
+
+                // Calculate orthogonal axes to draw the cross
+                float3 up = (abs(vpDir.y) > 0.9) ? float3(1,0,0) : float3(0,1,0);
+                float3 right = normalize(cross(vpDir, up));
+                up = normalize(cross(right, vpDir));
+
+                float dx = abs(dot(localDir, right));
+                float dy = abs(dot(localDir, up));
+
+                float thickness = size * 0.15 * max(0.5, _Thickness); 
+                float fwX = fwidth(dx) * 1.5; // Slight padding for clean Anti-Aliasing
+                float fwY = fwidth(dy) * 1.5;
+                float fwAngle = fwidth(angle) * 1.5;
+
+                // Solid fill with crisp anti-aliased edges (No more internal fading)
+                float lineX = 1.0 - smoothstep(thickness - fwY, thickness + fwY, dy);
+                float lineY = 1.0 - smoothstep(thickness - fwX, thickness + fwX, dx);
+
+                // Hard, solid cutoff at the tips of the cross
+                float alpha = max(lineX, lineY) * (1.0 - smoothstep(size - fwAngle, size, angle));
+                
+                vpLayer = max(vpLayer, alpha * color);
             }
 
             void DrawPlane(float u, float v, float n, fixed4 colU, fixed4 colV, float planeMask, float baseLineW, inout fixed4 layer) {
@@ -57,11 +79,14 @@ Shader "Hidden/PanoramaGridComposite"
                 float2 dist = abs(frac(uv + 0.5) - 0.5);
                 float2 fw = fwidth(uv);
                 
-                // --- GRID FALLOFF ---
                 float depth = abs(n);
                 float fadeOpacity = smoothstep(_Falloff * 0.1, _Falloff + 0.001, depth); 
-                float lineW = baseLineW * lerp(0.2, 1.0, smoothstep(0.0, 0.3, depth)); 
                 
+                float lineW = baseLineW * smoothstep(0.0, 0.4, depth); 
+                
+                float fadeX = smoothstep(1.0, 0.2, fw.x);
+                float fadeY = smoothstep(1.0, 0.2, fw.y);
+
                 float2 lines = smoothstep(fw * (lineW + 1.0), fw * max(0.01, lineW - 0.5), dist);
 
                 float2 idx = floor(uv + 0.5);
@@ -76,15 +101,14 @@ Shader "Hidden/PanoramaGridComposite"
                 float2 linesM = smoothstep(fw * (lineW*2.0 + 1.0), fw * max(0.01, lineW*2.0 - 0.5), abs(uv));
                 lines = max(lines, linesM);
 
-                // --- MODE 5: HORIZON ONLY ---
                 if (_GridAxisMode > 4.5 && _GridAxisMode < 5.5) {
                     layer = max(layer, linesM.x * colU * 1.5 * fadeOpacity);
                     layer = max(layer, linesM.y * colV * 1.5 * fadeOpacity);
-                    return; // Skip normal grid and diagonals
+                    return; 
                 }
 
-                layer = max(layer, lines.x * cU * fadeOpacity);
-                layer = max(layer, lines.y * cV * fadeOpacity);
+                layer = max(layer, lines.x * cU * fadeOpacity * fadeX);
+                layer = max(layer, lines.y * cV * fadeOpacity * fadeY);
 
                 if (_ShowDiagonals > 0.5) {
                     float d1 = abs(frac(uv.x - uv.y + 0.5) - 0.5);
@@ -93,12 +117,15 @@ Shader "Hidden/PanoramaGridComposite"
                     float fwD2 = fwidth(uv.x + uv.y);
                     float lD1 = smoothstep(fwD1*(lineW+1.0), fwD1*max(0.01, lineW-0.5), d1);
                     float lD2 = smoothstep(fwD2*(lineW+1.0), fwD2*max(0.01, lineW-0.5), d2);
-                    layer = max(layer, max(lD1, lD2) * fixed4(1,1,1,1) * 0.35 * fadeOpacity);
+                    
+                    float fadeD1 = smoothstep(1.0, 0.2, fwD1);
+                    float fadeD2 = smoothstep(1.0, 0.2, fwD2);
+
+                    layer = max(layer, max(lD1*fadeD1, lD2*fadeD2) * fixed4(1,1,1,1) * 0.35 * fadeOpacity);
                 }
             }
 
             fixed4 frag (v2f i) : SV_Target {
-                float vpSize = 0.001; 
                 fixed4 col = tex2D(_MainTex, i.uv);
                 float3 dir = UVToDir(i.uv);
                 
@@ -106,13 +133,13 @@ Shader "Hidden/PanoramaGridComposite"
                 float3 localDir = mul(rot, dir);
 
                 fixed4 gridLayer = fixed4(0,0,0,0);
+                fixed4 vpLayer = fixed4(0,0,0,0);
 
                 if (_UseGrid > 0.5)
                 {
                     int mode = round(_GridAxisMode);
                     float lineW = _Thickness * 0.5;
 
-                    // --- MODE 6: SPHERICAL GLOBE ---
                     if (mode == 6) {
                         float lon = (atan2(localDir.x, localDir.z) / PI) * _Subdivisions * 2.0; 
                         float lat = (asin(localDir.y) / (PI * 0.5)) * _Subdivisions;
@@ -123,7 +150,6 @@ Shader "Hidden/PanoramaGridComposite"
                         
                         float2 linesSph = smoothstep(fwSph * (lineW + 1.0), fwSph * max(0.01, lineW - 0.5), distSph);
                         
-                        // Emphasize Equator and Prime Meridians
                         float2 idx = floor(uvSph + 0.5);
                         float2 isZero = step(abs(idx), 0.1);
                         
@@ -138,7 +164,6 @@ Shader "Hidden/PanoramaGridComposite"
                     } 
                     else 
                     {
-                        // --- CARTESIAN MODES (0 to 5) ---
                         float3 absDir = abs(localDir);
                         float maxDir = max(absDir.x, max(absDir.y, absDir.z));
                         
@@ -151,35 +176,45 @@ Shader "Hidden/PanoramaGridComposite"
                         else if (mode == 1) { mask = float3(1,0,0); }
                         else if (mode == 2) { mask = float3(0,1,0); }
                         else if (mode == 3) { mask = float3(0,0,1); }
-                        // Modes 4 & 5 use mask(1,1,1)
 
                         DrawPlane(localDir.z, localDir.y, localDir.x, _ColorY, _ColorZ, mask.x, lineW, gridLayer);
                         DrawPlane(localDir.x, localDir.z, localDir.y, _ColorZ, _ColorX, mask.y, lineW, gridLayer);
                         DrawPlane(localDir.x, localDir.y, localDir.z, _ColorY, _ColorX, mask.z, lineW, gridLayer);
+
+                        if (mode >= 1 && mode <= 3) 
+                        {
+                            float horizonDepth = (mode == 1) ? absDir.x : (mode == 2) ? absDir.y : absDir.z;
+                            fixed4 horizonColor = (mode == 1) ? _ColorX : (mode == 2) ? _ColorY : _ColorZ;
+                            
+                            float fwHz = fwidth(horizonDepth);
+                            float hzThickness = fwHz * max(0.01, lineW * 4.0 + 1.0); 
+                            float hzLine = smoothstep(hzThickness, 0.0, horizonDepth);
+                            
+                            gridLayer = max(gridLayer, hzLine * horizonColor);
+                        }
                     }
 
-                    // --- VANISHING POINT DOTS ---
-                    DrawVP(localDir, float3(1,0,0), _ColorX, vpSize, gridLayer);
-                    DrawVP(localDir, float3(0,1,0), _ColorY, vpSize, gridLayer);
-                    DrawVP(localDir, float3(0,0,1), _ColorZ, vpSize, gridLayer);
+                    float vpSize = 0.015; 
+                    DrawPlusVP(localDir, float3(1,0,0), _ColorX, vpSize, vpLayer);
+                    DrawPlusVP(localDir, float3(0,1,0), _ColorY, vpSize, vpLayer);
+                    DrawPlusVP(localDir, float3(0,0,1), _ColorZ, vpSize, vpLayer);
 
                     if (_ShowDiagonals > 0.5 && mode != 6) {
                         fixed4 colXY = fixed4(1,1,0,1); 
                         fixed4 colXZ = fixed4(1,0,1,1); 
                         fixed4 colYZ = fixed4(0,1,1,1); 
                         
-                        DrawVP(localDir, float3(1,1,0), colXY, vpSize, gridLayer); DrawVP(localDir, float3(-1,1,0), colXY, vpSize, gridLayer);
-                        DrawVP(localDir, float3(1,0,1), colXZ, vpSize, gridLayer); DrawVP(localDir, float3(-1,0,1), colXZ, vpSize, gridLayer);
-                        DrawVP(localDir, float3(0,1,1), colYZ, vpSize, gridLayer); DrawVP(localDir, float3(0,-1,1), colYZ, vpSize, gridLayer);
+                        DrawPlusVP(localDir, float3(1,1,0), colXY, vpSize, vpLayer); DrawPlusVP(localDir, float3(-1,1,0), colXY, vpSize, vpLayer);
+                        DrawPlusVP(localDir, float3(1,0,1), colXZ, vpSize, vpLayer); DrawPlusVP(localDir, float3(-1,0,1), colXZ, vpSize, vpLayer);
+                        DrawPlusVP(localDir, float3(0,1,1), colYZ, vpSize, vpLayer); DrawPlusVP(localDir, float3(0,-1,1), colYZ, vpSize, vpLayer);
                     }
                 }
 
-                // --- GHOST SNAPPING PLANE (Thickness scales with Grid) ---
                 if (length(_GhostNormal.xyz) > 0.1)
                 {
                     float ghostDist = abs(dot(localDir, _GhostNormal.xyz));
                     float fwGhost = fwidth(ghostDist);
-                    float ghostLineW = _Thickness * 0.2 + 0.4; // THICKNESS CONTROL
+                    float ghostLineW = _Thickness * 0.2 + 0.4;
                     float ghostLine = smoothstep(fwGhost * (ghostLineW * 2.0 + 1.0), fwGhost * max(0.01, ghostLineW * 2.0 - 0.5), ghostDist);
                     gridLayer = max(gridLayer, ghostLine * _GhostColor); 
                 } 
@@ -187,10 +222,8 @@ Shader "Hidden/PanoramaGridComposite"
                 if (length(_TargetVP.xyz) > 0.1)
                 {
                     float vpDot = abs(dot(localDir, _TargetVP.xyz));
-                    
-                    // --- THE FIX: Ring radius mathematically linked to vpSize ---
-                    // Multiply vpSize by 8.0 to make the ring act as a comfortable reticle around the dot
-                    float ringAngle = vpSize * 4.0; 
+                    float vpSizeRef = 0.01;
+                    float ringAngle = vpSizeRef * 3.5; 
                     float ringRadius = cos(ringAngle); 
                     
                     float ringDist = abs(vpDot - ringRadius);
@@ -202,6 +235,10 @@ Shader "Hidden/PanoramaGridComposite"
 
                 gridLayer.a = saturate(gridLayer.a);
                 col.rgb = lerp(col.rgb, gridLayer.rgb, gridLayer.a * _Opacity);
+                
+                vpLayer.a = saturate(vpLayer.a);
+                col.rgb = lerp(col.rgb, vpLayer.rgb, vpLayer.a * _Opacity * 1.5); 
+
                 return col;
             }
             ENDCG
