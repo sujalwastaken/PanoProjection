@@ -165,20 +165,36 @@ public class AnimationLayer : GroupLayer
 
     public AnimationLayer(string name) : base(name) { }
 
+    // Expose a way to manually force a cache rebuild
+    public void MarkDirty()
+    {
+        _dirtyKeys = true;
+    }
+
     public void SetCell(int frame, int childIndex)
     {
         if (timelineMap.ContainsKey(frame)) timelineMap[frame] = childIndex;
         else timelineMap.Add(frame, childIndex);
-        _dirtyKeys = true; // Mark dirty so we rebuild cache next lookup
+        _dirtyKeys = true; 
+    }
+
+    // Safe removal method that also marks cache dirty
+    public void RemoveCell(int frame)
+    {
+        if (timelineMap.ContainsKey(frame))
+        {
+            timelineMap.Remove(frame);
+            _dirtyKeys = true;
+        }
     }
 
     public int GetActiveCellIndex(int frame)
     {
-        // 1. Direct Hit (O(1)) - Most common during painting
-        if (timelineMap.ContainsKey(frame)) return timelineMap[frame];
+        // 1. Direct Hit (Using TryGetValue makes it physically impossible to throw a KeyNotFoundException)
+        if (timelineMap.TryGetValue(frame, out int exactCell)) return exactCell;
 
-        // 2. Rebuild Cache if needed
-        if (_dirtyKeys)
+        // 2. Rebuild Cache if explicitly dirty, OR if we detect a mismatch (Self-Healing fallback)
+        if (_dirtyKeys || _cachedSortedKeys.Count != timelineMap.Count)
         {
             _cachedSortedKeys = new List<int>(timelineMap.Keys);
             _cachedSortedKeys.Sort();
@@ -193,7 +209,20 @@ public class AnimationLayer : GroupLayer
         // Reverse loop is extremely fast for timeline lookups
         for (int i = count - 1; i >= 0; i--)
         {
-            if (_cachedSortedKeys[i] < frame) return timelineMap[_cachedSortedKeys[i]];
+            if (_cachedSortedKeys[i] < frame)
+            {
+                // Safely pull from dictionary using the cache
+                if (timelineMap.TryGetValue(_cachedSortedKeys[i], out int cellIndex))
+                {
+                    return cellIndex;
+                }
+                else
+                {
+                    // If the cache is somehow still corrupted, force a rebuild next frame and fail safely
+                    _dirtyKeys = true;
+                    return -1;
+                }
+            }
         }
 
         return -1;

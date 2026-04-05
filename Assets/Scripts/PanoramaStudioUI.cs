@@ -710,7 +710,7 @@ public class PanoramaStudioUI : MonoBehaviour
 
                 if (animLayer != null && animLayer.timelineMap.ContainsKey(layerManager.currentFrame))
                 {
-                    animLayer.timelineMap.Remove(layerManager.currentFrame);
+                    animLayer.RemoveCell(layerManager.currentFrame);
                     layerManager.compositionDirty = true;
                 }
             }
@@ -889,7 +889,7 @@ public class PanoramaStudioUI : MonoBehaviour
                 {
                     int currentIdx = animLayer.timelineMap.ContainsKey(f) ? animLayer.timelineMap[f] : -1;
                     int nextIdx = currentIdx + 1;
-                    if (nextIdx >= animLayer.children.Count) animLayer.timelineMap.Remove(f); else animLayer.SetCell(f, nextIdx);
+                    if (nextIdx >= animLayer.children.Count) animLayer.RemoveCell(f); else animLayer.SetCell(f, nextIdx);
                 }
                 layerManager.StepFrame(0);
             }

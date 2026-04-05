@@ -586,7 +586,7 @@ public class PanoramaLayerManager : MonoBehaviour
     void RemoveFromAnimTimeline(AnimationLayer anim, int removedIndex)
     {
         List<int> frames = new List<int>(anim.timelineMap.Keys);
-        foreach (int f in frames) { int idx = anim.timelineMap[f]; if (idx == removedIndex) anim.timelineMap.Remove(f); else if (idx > removedIndex) anim.timelineMap[f] = idx - 1; }
+        foreach (int f in frames) { int idx = anim.timelineMap[f]; if (idx == removedIndex) anim.RemoveCell(f); else if (idx > removedIndex) anim.timelineMap[f] = idx - 1; }
     }
     public void AddLayer(LayerType type)
     {
