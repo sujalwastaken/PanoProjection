@@ -24,10 +24,111 @@ public class PanoramaUI : MonoBehaviour
     private bool showUI = true;
 
     // Dimensions
-    private float uiWidth = 450f;
-    private float baseHeight = 630f;
-    private float colorPickerHeight = 120f; 
-    private float gridControlsHeight = 220f; 
+    private float uiWidth = 280f; 
+
+    // --- DARK THEME STYLES ---
+    private GUIStyle panelStyle;
+    private GUIStyle headerStyle;
+    private GUIStyle toolbarButtonStyle;
+    private GUIStyle toolbarActiveStyle;
+    private GUIStyle labelStyle;
+    private GUIStyle valueLabelStyle;
+    private GUIStyle darkSliderStyle;
+    private GUIStyle darkSliderThumbStyle;
+    private bool stylesInitialized = false;
+
+    private Texture2D MakeTex(int width, int height, Color col)
+    {
+        Color[] pix = new Color[width * height];
+        for (int i = 0; i < pix.Length; ++i) pix[i] = col;
+        Texture2D result = new Texture2D(width, height);
+        result.SetPixels(pix);
+        result.Apply();
+        return result;
+    }
+
+    private Texture2D MakeBorderTex(int width, int height, Color bg, Color borderCol, int border)
+    {
+        Color[] pix = new Color[width * height];
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                if (x < border || x >= width - border || y < border || y >= height - border)
+                    pix[y * width + x] = borderCol;
+                else
+                    pix[y * width + x] = bg;
+            }
+        }
+        Texture2D result = new Texture2D(width, height);
+        result.SetPixels(pix);
+        result.Apply();
+        return result;
+    }
+
+    void InitStyles()
+    {
+        if (stylesInitialized) return;
+        stylesInitialized = true;
+        
+        Color panelBg = new Color(0.18f, 0.18f, 0.18f, 0.98f);
+        Color headerBg = new Color(0.12f, 0.12f, 0.12f, 1f);
+        Color borderNormal = new Color(0.08f, 0.08f, 0.08f, 1f);
+        
+        Color btnNormal = new Color(0.22f, 0.22f, 0.22f, 1f);
+        Color btnHover = new Color(0.28f, 0.28f, 0.28f, 1f);
+        Color btnActive = new Color(0.15f, 0.5f, 0.7f, 1f); 
+        Color textNormal = new Color(0.85f, 0.85f, 0.85f, 1f);
+        Color textMuted = new Color(0.65f, 0.65f, 0.65f, 1f);
+
+        panelStyle = new GUIStyle(GUI.skin.box);
+        panelStyle.normal.background = MakeBorderTex(16, 16, panelBg, borderNormal, 1);
+        panelStyle.padding = new RectOffset(4, 4, 4, 4);
+        panelStyle.margin = new RectOffset(0, 0, 0, 0);
+
+        headerStyle = new GUIStyle(GUI.skin.label);
+        headerStyle.normal.background = MakeBorderTex(16, 16, headerBg, borderNormal, 1);
+        headerStyle.normal.textColor = Color.white;
+        headerStyle.fontSize = 11;
+        headerStyle.fontStyle = FontStyle.Bold;
+        headerStyle.alignment = TextAnchor.MiddleLeft;
+        headerStyle.padding = new RectOffset(6, 6, 4, 4);
+        headerStyle.margin = new RectOffset(0, 0, 0, 4);
+
+        labelStyle = new GUIStyle(GUI.skin.label);
+        labelStyle.normal.textColor = textNormal;
+        labelStyle.fontSize = 11;
+        labelStyle.margin = new RectOffset(4, 4, 2, 2);
+        
+        valueLabelStyle = new GUIStyle(labelStyle);
+        valueLabelStyle.alignment = TextAnchor.MiddleRight;
+        valueLabelStyle.normal.textColor = textMuted;
+
+        toolbarButtonStyle = new GUIStyle(GUI.skin.button);
+        toolbarButtonStyle.normal.background = MakeBorderTex(16, 16, btnNormal, borderNormal, 1);
+        toolbarButtonStyle.hover.background = MakeBorderTex(16, 16, btnHover, borderNormal, 1);
+        toolbarButtonStyle.normal.textColor = textNormal;
+        toolbarButtonStyle.fontSize = 11;
+        toolbarButtonStyle.alignment = TextAnchor.MiddleCenter;
+        toolbarButtonStyle.margin = new RectOffset(0, 0, 0, 0);
+        toolbarButtonStyle.padding = new RectOffset(4, 4, 4, 4);
+
+        toolbarActiveStyle = new GUIStyle(toolbarButtonStyle);
+        toolbarActiveStyle.normal.background = MakeBorderTex(16, 16, btnActive, borderNormal, 1);
+        toolbarActiveStyle.normal.textColor = Color.white;
+        toolbarActiveStyle.hover.background = MakeBorderTex(16, 16, new Color(0.2f, 0.6f, 0.8f, 1f), borderNormal, 1);
+
+        darkSliderStyle = new GUIStyle(GUI.skin.horizontalSlider);
+        darkSliderStyle.normal.background = MakeBorderTex(16, 16, new Color(0.1f, 0.1f, 0.1f, 1f), borderNormal, 1);
+        darkSliderStyle.fixedHeight = 4;
+        darkSliderStyle.margin = new RectOffset(4, 4, 6, 6);
+        
+        darkSliderThumbStyle = new GUIStyle(GUI.skin.horizontalSliderThumb);
+        darkSliderThumbStyle.normal.background = MakeBorderTex(16, 16, new Color(0.4f, 0.4f, 0.4f, 1f), borderNormal, 1);
+        darkSliderThumbStyle.hover.background = MakeTex(16, 16, new Color(0.6f, 0.6f, 0.6f, 1f));
+        darkSliderThumbStyle.fixedWidth = 10;
+        darkSliderThumbStyle.fixedHeight = 10;
+    }
 
     void Start()
     {
@@ -65,9 +166,7 @@ public class PanoramaUI : MonoBehaviour
 
     void OnGUI()
     {
-        GUI.backgroundColor = uiBackgroundColor;
-        GUI.contentColor = textColor;
-        GUI.skin.label.fontSize = 21;
+        InitStyles();
 
         // Init Custom Style once
         if (hueSliderStyle == null) {
@@ -78,220 +177,138 @@ public class PanoramaUI : MonoBehaviour
         if (!showUI)
         {
             GUILayout.BeginArea(new Rect(10, 10, 50, 50));
-            DrawLabelWithShadow("[W]");
+            GUILayout.Label("[W]", labelStyle);
             GUILayout.EndArea();
             return; 
         }
 
         // --- DYNAMIC HEIGHT CALCULATION ---
-        bool showGridControls = painter.showGrid || painter.enableSnapping;
-        bool showColorPicker = !painter.isEraser; 
-
-        float currentHeight = baseHeight;
-        if (showGridControls) currentHeight += gridControlsHeight;
-        if (showColorPicker) currentHeight += colorPickerHeight;
+        float currentHeight = Screen.height - 20; // Just fill vertically for tools
+        uiWidth = 280f; // Professional slim width
         
-        float padding = 10;
+        GUILayout.BeginArea(new Rect(10, 10, uiWidth, currentHeight));
+        GUILayout.BeginVertical(panelStyle);
 
-        GUILayout.BeginArea(new Rect(padding, padding, uiWidth, currentHeight), GUI.skin.box);
-        GUILayout.BeginVertical();
+        // --- HEADER ---
+        GUILayout.Label("PANO STUDIO", headerStyle);
 
-        // --- Info ---
-        DrawLabelWithShadow($"FPS: {Mathf.CeilToInt(fps)}");
-        
-        // --- RAM Display ---
-        if (MemoryTracker.Instance != null && MemoryFailSafe.Instance != null)
-        {
-            float ramMB = MemoryTracker.Instance.PrivateMemoryMB;
-            float ramPct = MemoryTracker.Instance.RamUsagePercent;
-            
-            string colorTag = "";
-            string endTag = "";
-
-            // Only apply color tags if we cross the thresholds
-            if (ramPct >= MemoryFailSafe.Instance.criticalBlockPercent) 
-            {
-                colorTag = "<color=red>";
-                endTag = "</color>";
-            }
-            else if (ramPct >= MemoryFailSafe.Instance.thresholdPercent) 
-            {
-                colorTag = "<color=yellow>";
-                endTag = "</color>";
-            }
-
-            DrawLabelWithShadow($"{colorTag}RAM: {ramMB:F1} MB ({ramPct:F1}%){endTag}");
-        }
-
-        Vector3 rot = cam.transform.eulerAngles;
-        float x = (rot.x > 180) ? rot.x - 360 : rot.x;
-        float y = rot.y;
-        float z = (rot.z > 180) ? rot.z - 360 : rot.z;
-        DrawLabelWithShadow($"ROTATION X: {x:F1}  Y: {y:F1}  Z: {z:F1}");
-
-        DrawLabelWithShadow($"H-FOV: {projection.calculatedHorizontalFOV:F1}  V-FOV: {projection.calculatedVerticalFOV:F1}");
-        GUILayout.Space(10);
-
-        // --- Tools Status ---
+        // --- TOOLBAR ---
         GUILayout.BeginHorizontal();
-        GUI.color = (!painter.isEraser) ? activeToolColor : textColor;
-        GUILayout.Label("Brush: [Q]");
-        GUI.color = (painter.isEraser) ? activeToolColor : textColor;
-        GUILayout.Label("Eraser: [E]");
-        GUI.color = (painter.showGrid) ? activeToolColor : textColor;
-        GUILayout.Label("Grid: [G]");
-        GUI.color = (painter.enableSnapping) ? activeToolColor : textColor;
-        GUILayout.Label("Snap: [S]");
-        GUI.color = textColor; 
+        if (GUILayout.Button("Brush [Q]", !painter.isEraser ? toolbarActiveStyle : toolbarButtonStyle)) painter.isEraser = false;
+        if (GUILayout.Button("Eraser [E]", painter.isEraser ? toolbarActiveStyle : toolbarButtonStyle)) painter.isEraser = true;
+        if (GUILayout.Button("Grid [G]", painter.showGrid ? toolbarActiveStyle : toolbarButtonStyle)) painter.showGrid = !painter.showGrid;
+        if (GUILayout.Button("Snap [S]", painter.enableSnapping ? toolbarActiveStyle : toolbarButtonStyle)) painter.enableSnapping = !painter.enableSnapping;
         GUILayout.EndHorizontal();
 
-        GUILayout.Space(10);
+        GUILayout.Space(8);
+
+        // --- PROPERTIES SECTION ---
+        GUILayout.Label("VIEWPORT", headerStyle);
+        DrawRow("Zoom (FOV)", $"{projection.perspective:F1}");
+        projection.perspective = GUILayout.HorizontalSlider(projection.perspective, 1f, 100f, darkSliderStyle, darkSliderThumbStyle);
         
-        // --- Instructions ---
-        DrawLabelWithShadow("Hide Window: [W]"); 
-        DrawLabelWithShadow("Undo: [Ctrl+Z]  |  Redo: [Ctrl+Shift+Z]");
-        DrawLabelWithShadow("Save: [Ctrl+S]  |  Load: [Ctrl+D]");
-        GUILayout.Space(5);
-        DrawLabelWithShadow("Align Grid to View: [Shift+G]");
-        DrawLabelWithShadow("Temp Snap: Hold [Shift]"); 
-        DrawLabelWithShadow("Straight Line: Hold [Alt]"); 
+        DrawRow("Distortion", $"{projection.fisheyePerspective:F1}");
+        projection.fisheyePerspective = GUILayout.HorizontalSlider(projection.fisheyePerspective, 0f, 100f, darkSliderStyle, darkSliderThumbStyle);
 
-        GUILayout.Space(15);
+        Vector3 rot = cam.transform.eulerAngles;
+        DrawRow("Rotation", $"{(rot.x>180?rot.x-360:rot.x):F0}°  {rot.y:F0}°  {(rot.z>180?rot.z-360:rot.z):F0}°");
         
-        // --- Controls ---
-        DrawLabelWithShadow($"Perspective (Zoom): {projection.perspective:F1}");
-        projection.perspective = GUILayout.HorizontalSlider(projection.perspective, 1f, 100f);
-        GUILayout.Space(5);
+        GUILayout.Space(8);
 
-        DrawLabelWithShadow($"Fisheye Distortion: {projection.fisheyePerspective:F1}");
-        projection.fisheyePerspective = GUILayout.HorizontalSlider(projection.fisheyePerspective, 0f, 100f);
-        GUILayout.Space(5);
-
+        GUILayout.Label(painter.isEraser ? "ERASER" : "BRUSH", headerStyle);
         if (painter.isEraser)
         {
-            DrawLabelWithShadow($"Eraser Size: {painter.eraserSize:F0}");
-            painter.eraserSize = GUILayout.HorizontalSlider(painter.eraserSize, 1f, 200f);
+            DrawRow("Size", $"{painter.eraserSize:F0}");
+            painter.eraserSize = GUILayout.HorizontalSlider(painter.eraserSize, 1f, 200f, darkSliderStyle, darkSliderThumbStyle);
         }
         else
         {
-            // --- BRUSH CONTROLS ---
-            DrawLabelWithShadow($"Brush Size: {painter.brushSize:F0}");
-            painter.brushSize = GUILayout.HorizontalSlider(painter.brushSize, 1f, 200f);
+            DrawRow("Size", $"{painter.brushSize:F0}");
+            painter.brushSize = GUILayout.HorizontalSlider(painter.brushSize, 1f, 200f, darkSliderStyle, darkSliderThumbStyle);
             
-            GUILayout.Space(5); // Add space between slider and toggle
+            GUILayout.BeginHorizontal();
+            painter.useSmartBrush = GUILayout.Toggle(painter.useSmartBrush, " Scale with Zoom", labelStyle);
+            GUILayout.EndHorizontal();
 
-            // Color Logic: Green if ON, normal text color if OFF
-            Color originalColor = GUI.color;
-            if (painter.useSmartBrush) GUI.color = Color.green;
+            GUILayout.Space(4);
             
-            painter.useSmartBrush = GUILayout.Toggle(painter.useSmartBrush, " Smart Brush (Scale with FOV)");
+            // Color Picker Group
+            GUILayout.BeginVertical(panelStyle);
             
-            GUI.color = originalColor; // Reset color
-            GUILayout.Space(5);
-            
-            // --- COLOR PICKER ---
-            GUILayout.BeginVertical(GUI.skin.box);
-            DrawLabelWithShadow("Brush Color");
-            
-            // --- SINGLE HUE SLIDER ---
-            GUILayout.Space(5);
-            
-            // Get current Hue
             float h, s, v;
             Color.RGBToHSV(painter.drawColor, out h, out s, out v);
             
-            GUILayout.BeginHorizontal();
-            // Use custom rainbow style
             float newH = GUILayout.HorizontalSlider(h, 0f, 1f, hueSliderStyle, GUI.skin.horizontalSliderThumb);
-            GUILayout.EndHorizontal();
+            if (Mathf.Abs(newH - h) > 0.001f) painter.drawColor = Color.HSVToRGB(newH, 1f, 1f);
 
-            // Only update if changed (Prevents button conflict)
-            if (Mathf.Abs(newH - h) > 0.001f)
-            {
-                // Force full saturation/value when picking from Hue slider
-                painter.drawColor = Color.HSVToRGB(newH, 1f, 1f);
-            }
-
-            // --- COLOR PREVIEW BOX ---
             GUILayout.BeginHorizontal();
-            GUILayout.FlexibleSpace();
-            Rect cRect = GUILayoutUtility.GetRect(uiWidth - 40, 20);
-            Color oldC = GUI.color;
-            GUI.color = painter.drawColor;
+            Rect cRect = GUILayoutUtility.GetRect(uiWidth - 40, 16);
+            Color oldC = GUI.color; GUI.color = painter.drawColor;
             GUI.DrawTexture(cRect, colorSwatch, ScaleMode.StretchToFill);
             GUI.color = oldC;
-            GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
-            // Quick Presets
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Red")) painter.drawColor = Color.red;
-            if (GUILayout.Button("Green")) painter.drawColor = Color.green;
-            if (GUILayout.Button("Blue")) painter.drawColor = Color.blue;
-            if (GUILayout.Button("Black")) painter.drawColor = Color.black;
+            if (GUILayout.Button("R", toolbarButtonStyle)) painter.drawColor = Color.red;
+            if (GUILayout.Button("G", toolbarButtonStyle)) painter.drawColor = Color.green;
+            if (GUILayout.Button("B", toolbarButtonStyle)) painter.drawColor = Color.blue;
+            if (GUILayout.Button("W", toolbarButtonStyle)) painter.drawColor = Color.white;
+            if (GUILayout.Button("K", toolbarButtonStyle)) painter.drawColor = Color.black;
             GUILayout.EndHorizontal();
             
             GUILayout.EndVertical();
         }
 
-        // --- Grid Controls (Conditional) ---
-        if (showGridControls)
+        GUILayout.Space(8);
+
+        if (painter.showGrid || painter.enableSnapping)
         {
-            GUILayout.Space(15);
-            Color originalColor = GUI.color;
+            GUILayout.Label("GRID & SNAPPING", headerStyle);
             
-            // 1. Subdivisions
-            DrawLabelWithShadow($"Grid Subdivisions: {painter.gridSubdivisions}");
-            painter.gridSubdivisions = (int)GUILayout.HorizontalSlider(painter.gridSubdivisions, 1, 32);
+            DrawRow("Subdivisions", $"{painter.gridSubdivisions}");
+            painter.gridSubdivisions = (int)GUILayout.HorizontalSlider(painter.gridSubdivisions, 1, 32, darkSliderStyle, darkSliderThumbStyle);
 
-            // 2. Thickness
-            DrawLabelWithShadow($"Grid Thickness: {painter.gridThickness:F2}");
-            painter.gridThickness = GUILayout.HorizontalSlider(painter.gridThickness, 0.1f, 5.0f); 
+            DrawRow("Thickness", $"{painter.gridThickness:F1}");
+            painter.gridThickness = GUILayout.HorizontalSlider(painter.gridThickness, 0.1f, 5.0f, darkSliderStyle, darkSliderThumbStyle); 
 
-            // 3. Opacity
-            DrawLabelWithShadow($"Grid Opacity: {painter.gridOpacity:F2}");
-            painter.gridOpacity = GUILayout.HorizontalSlider(painter.gridOpacity, 0.0f, 1.0f);
+            DrawRow("Opacity", $"{painter.gridOpacity:F2}");
+            painter.gridOpacity = GUILayout.HorizontalSlider(painter.gridOpacity, 0.0f, 1.0f, darkSliderStyle, darkSliderThumbStyle);
 
-            // 4. Falloff
-            DrawLabelWithShadow($"Grid Falloff (Depth Fade): {painter.gridFalloff:F3}");
-            painter.gridFalloff = GUILayout.HorizontalSlider(painter.gridFalloff, 0.001f, 0.5f);
+            DrawRow("Depth Fade", $"{painter.gridFalloff:F2}");
+            painter.gridFalloff = GUILayout.HorizontalSlider(painter.gridFalloff, 0.001f, 0.5f, darkSliderStyle, darkSliderThumbStyle);
 
-            GUILayout.Space(5);
-
-            // 5. Grid Axis Mode Selector (Click to cycle)
-            GUI.color = Color.cyan;
-            if (GUILayout.Button($"Grid Mode: {painter.activeGridAxis.ToString()}"))
+            GUILayout.Space(4);
+            if (GUILayout.Button($"Axis Mode: {painter.activeGridAxis.ToString()}", toolbarButtonStyle))
             {
-                int nextMode = (int)painter.activeGridAxis + 1;
-                if (nextMode > 6) nextMode = 0; // Wraps back to 0 after mode 6
-                painter.activeGridAxis = (PanoramaPaintGPU.GridAxisMode)nextMode;
-                
+                painter.activeGridAxis = (PanoramaPaintGPU.GridAxisMode)(((int)painter.activeGridAxis + 1) % 7);
             }
-
-            // 6. Diagonals Mode
-            GUI.color = (painter.useDiagonalSnapping) ? Color.green : textColor;
-            painter.useDiagonalSnapping = GUILayout.Toggle(painter.useDiagonalSnapping, " 45° Snap / Diagonals [F]");
             
-            GUI.color = originalColor; 
+            painter.useDiagonalSnapping = GUILayout.Toggle(painter.useDiagonalSnapping, " 45° Diagonals [F]", labelStyle);
+            GUILayout.Space(8);
         }
 
+        GUILayout.FlexibleSpace();
+        
+        // --- SYSTEM INFO ---
+        GUILayout.Label("SYSTEM", headerStyle);
+        DrawRow("Performance", $"{Mathf.CeilToInt(fps)} FPS");
+        if (MemoryTracker.Instance != null)
+        {
+            float ramMB = MemoryTracker.Instance.PrivateMemoryMB;
+            float ramPct = MemoryTracker.Instance.RamUsagePercent;
+            DrawRow("Memory", $"{ramMB:F1} MB ({ramPct:F0}%)");
+        }
+        
         GUILayout.EndVertical();
         GUILayout.EndArea();
     }
 
-    void DrawLabelWithShadow(string text, float width = -1)
+    void DrawRow(string label, string val)
     {
-        GUIContent content = new GUIContent(text);
-        Rect rect;
-        if(width > 0) 
-            rect = GUILayoutUtility.GetRect(content, GUI.skin.label, GUILayout.Width(width));
-        else 
-            rect = GUILayoutUtility.GetRect(content, GUI.skin.label);
-
-        Color old = GUI.color;
-        GUI.color = Color.black;
-        GUI.Label(new Rect(rect.x + 1, rect.y + 1, rect.width, rect.height), text);
-        GUI.color = old;
-        GUI.Label(rect, text);
+        GUILayout.BeginHorizontal();
+        GUILayout.Label(label, labelStyle);
+        GUILayout.FlexibleSpace();
+        GUILayout.Label(val, valueLabelStyle);
+        GUILayout.EndHorizontal();
     }
 }

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 [RequireComponent(typeof(PanoramaLayerManager))]
 public class PanoramaStudioUI : MonoBehaviour
@@ -16,12 +16,12 @@ public class PanoramaStudioUI : MonoBehaviour
     private Vector2 timelineScroll;
 
     // --- LAYOUT CONSTANTS ---
-    private float layerRowHeight = 28f;
-    private float timelineRowHeight = 26f;
-    private float cellWidth = 32f;
-    private float layerNameColWidth = 150f;
-    private float visColWidth = 30f;
-    private float typeColWidth = 40f;
+    private float layerRowHeight = 22f; // Tighter professional spacing
+    private float timelineRowHeight = 22f;
+    private float cellWidth = 30f;
+    private float layerNameColWidth = 140f;
+    private float visColWidth = 24f;
+    private float typeColWidth = 24f;
 
     // --- RENAMING STATE ---
     private LayerNode renamingNode = null;
@@ -135,6 +135,9 @@ public class PanoramaStudioUI : MonoBehaviour
     {
         if (!showUI) return;
 
+        InitStyles();
+        GUI.skin = customSkin; // Apply dark theme skin
+
         // Ensure default skin is loaded before modifying
         if (GUI.skin.label.fontSize != 12)
         {
@@ -164,11 +167,150 @@ public class PanoramaStudioUI : MonoBehaviour
             return;
         }
 
+        // --- EDGE CASE: WINDOW CLAMPING ---
         timelineRect.width = Screen.width - 40;
+        timelineRect.x = Mathf.Clamp(timelineRect.x, 0, Screen.width - timelineRect.width);
+        timelineRect.y = Mathf.Clamp(timelineRect.y, 0, Screen.height - 50);
+
+        layersRect.x = Mathf.Clamp(layersRect.x, 0, Screen.width - 50);
+        layersRect.y = Mathf.Clamp(layersRect.y, 0, Screen.height - 50);
+
+        graphRect.x = Mathf.Clamp(graphRect.x, 0, Screen.width - 50);
+        graphRect.y = Mathf.Clamp(graphRect.y, 0, Screen.height - 50);
 
         DrawTimelineWindow();
         DrawLayerWindow();
         if (showGraph) DrawGraphWindow();
+    }
+
+    private GUISkin customSkin;
+    private Texture2D MakeTex(int width, int height, Color col)
+    {
+        Color[] pix = new Color[width * height];
+        for (int i = 0; i < pix.Length; ++i) pix[i] = col;
+        Texture2D result = new Texture2D(width, height);
+        result.SetPixels(pix);
+        result.Apply();
+        return result;
+    }
+
+    private Texture2D MakeBorderTex(int width, int height, Color bg, Color borderCol, int border)
+    {
+        Color[] pix = new Color[width * height];
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                if (x < border || x >= width - border || y < border || y >= height - border)
+                    pix[y * width + x] = borderCol;
+                else
+                    pix[y * width + x] = bg;
+            }
+        }
+        Texture2D result = new Texture2D(width, height);
+        result.SetPixels(pix);
+        result.Apply();
+        return result;
+    }
+
+    // --- NEW PROFESSIONAL STYLES ---
+    private GUIStyle headerStyle;
+    private GUIStyle toolbarButtonStyle;
+    private GUIStyle toolbarActiveStyle;
+
+    void InitStyles()
+    {
+        if (customSkin != null) return;
+        
+        customSkin = Instantiate(GUI.skin);
+        
+        Color bg = new Color(0.12f, 0.12f, 0.12f, 0.98f);
+        Color windowBg = new Color(0.08f, 0.08f, 0.08f, 0.98f);
+        Color headerBg = new Color(0.15f, 0.15f, 0.15f, 1f);
+        Color borderNormal = new Color(0.2f, 0.2f, 0.2f, 1f);
+        Color borderHover = new Color(0.4f, 0.4f, 0.4f, 1f);
+
+        Color btnNormal = new Color(0.18f, 0.18f, 0.18f, 1f);
+        Color btnHover = new Color(0.25f, 0.25f, 0.25f, 1f);
+        Color btnActive = new Color(0.15f, 0.6f, 0.8f, 1f); // Cyan/Blue accent
+        Color textNormal = new Color(0.9f, 0.9f, 0.9f, 1f);
+
+        // Make window boundary much more subtle (almost invisible)
+        Color windowBorder = new Color(0.12f, 0.12f, 0.12f, 1f);
+        var winTex = MakeBorderTex(16, 16, windowBg, windowBorder, 1);
+        
+        customSkin.window.normal.background = winTex;
+        customSkin.window.active.background = winTex;
+        customSkin.window.focused.background = winTex;
+        customSkin.window.hover.background = winTex;
+        customSkin.window.onNormal.background = winTex;
+        customSkin.window.onActive.background = winTex;
+        customSkin.window.onFocused.background = winTex;
+        customSkin.window.onHover.background = winTex;
+        
+        customSkin.window.border = new RectOffset(2, 2, 2, 2);
+        customSkin.window.padding = new RectOffset(2, 2, 20, 2); // 20px top padding for title
+
+        customSkin.window.normal.textColor = textNormal;
+        customSkin.window.active.textColor = textNormal;
+        customSkin.window.focused.textColor = textNormal;
+        customSkin.window.hover.textColor = textNormal;
+        customSkin.window.onNormal.textColor = textNormal;
+        customSkin.window.onActive.textColor = textNormal;
+        customSkin.window.onFocused.textColor = textNormal;
+        customSkin.window.onHover.textColor = textNormal;
+
+        customSkin.box.normal.background = MakeBorderTex(16, 16, bg, borderNormal, 1);
+        customSkin.box.border = new RectOffset(2, 2, 2, 2);
+        customSkin.box.normal.textColor = textNormal;
+
+        customSkin.label.normal.textColor = textNormal;
+        customSkin.label.fontSize = 11;
+        customSkin.label.alignment = TextAnchor.MiddleLeft;
+        customSkin.label.margin = new RectOffset(2, 2, 0, 0);
+
+        customSkin.button.normal.background = MakeBorderTex(16, 16, btnNormal, borderNormal, 1);
+        customSkin.button.hover.background = MakeBorderTex(16, 16, btnHover, borderHover, 1);
+        customSkin.button.active.background = MakeBorderTex(16, 16, btnActive, btnActive, 1);
+        customSkin.button.border = new RectOffset(2, 2, 2, 2);
+        customSkin.button.normal.textColor = textNormal;
+        customSkin.button.hover.textColor = Color.white;
+        customSkin.button.fontSize = 11;
+        customSkin.button.alignment = TextAnchor.MiddleCenter;
+        customSkin.button.margin = new RectOffset(2, 2, 2, 2);
+        customSkin.button.padding = new RectOffset(4, 4, 2, 2);
+
+        customSkin.horizontalSlider.normal.background = MakeBorderTex(16, 16, new Color(0.1f, 0.1f, 0.1f, 1f), borderNormal, 1);
+        customSkin.horizontalSlider.border = new RectOffset(2, 2, 2, 2);
+        customSkin.horizontalSlider.fixedHeight = 6;
+        
+        customSkin.horizontalSliderThumb.normal.background = MakeBorderTex(16, 16, btnActive, textNormal, 1);
+        customSkin.horizontalSliderThumb.hover.background = MakeTex(16, 16, new Color(0.3f, 0.7f, 1.0f, 1f));
+        customSkin.horizontalSliderThumb.border = new RectOffset(2, 2, 2, 2);
+        customSkin.horizontalSliderThumb.fixedWidth = 12;
+        customSkin.horizontalSliderThumb.fixedHeight = 12;
+
+        customSkin.toggle.normal.textColor = textNormal;
+        customSkin.toggle.fontSize = 11;
+
+        customSkin.textField.normal.background = MakeBorderTex(16, 16, new Color(0.05f, 0.05f, 0.05f, 1f), borderNormal, 1);
+        customSkin.textField.border = new RectOffset(2, 2, 2, 2);
+        customSkin.textField.normal.textColor = Color.white;
+        customSkin.textField.fontSize = 11;
+        customSkin.textField.alignment = TextAnchor.MiddleLeft;
+
+        headerStyle = new GUIStyle(customSkin.label);
+        headerStyle.normal.background = MakeBorderTex(16, 16, headerBg, borderNormal, 1);
+        headerStyle.border = new RectOffset(2, 2, 2, 2);
+        headerStyle.fontStyle = FontStyle.Bold;
+        headerStyle.padding = new RectOffset(6, 6, 4, 4);
+
+        toolbarButtonStyle = new GUIStyle(customSkin.button);
+        toolbarButtonStyle.margin = new RectOffset(0, 0, 0, 0);
+
+        toolbarActiveStyle = new GUIStyle(toolbarButtonStyle);
+        toolbarActiveStyle.normal.background = MakeBorderTex(16, 16, btnActive, borderNormal, 1);
+        toolbarActiveStyle.normal.textColor = Color.white;
     }
 
     // =================================================================================================
@@ -606,19 +748,18 @@ public class PanoramaStudioUI : MonoBehaviour
     // =================================================================================================
     void DrawLayerWindow()
     {
-        layersRect.x = Mathf.Clamp(layersRect.x, 0, Screen.width - 50);
-        layersRect.y = Mathf.Clamp(layersRect.y, 0, Screen.height - 50);
+        // Clamping already handled in OnGUI edge-case fix
 
         layersRect = GUI.Window(0, layersRect, (id) =>
         {
             GUILayout.BeginVertical();
 
-            // Buttons
+            // Buttons Toolbar
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("+Layer")) layerManager.AddLayer(LayerType.Paint);
-            if (GUILayout.Button("+Anim")) layerManager.AddLayer(LayerType.Animation);
-            if (GUILayout.Button("+Folder")) layerManager.AddLayer(LayerType.Folder);
-            if (GUILayout.Button("+Cam")) layerManager.AddLayer(LayerType.Camera);
+            if (GUILayout.Button("+Paint", toolbarButtonStyle)) layerManager.AddLayer(LayerType.Paint);
+            if (GUILayout.Button("+Anim", toolbarButtonStyle)) layerManager.AddLayer(LayerType.Animation);
+            if (GUILayout.Button("+Folder", toolbarButtonStyle)) layerManager.AddLayer(LayerType.Folder);
+            if (GUILayout.Button("+Cam", toolbarButtonStyle)) layerManager.AddLayer(LayerType.Camera);
             GUILayout.EndHorizontal();
 
             // Scroll Area
@@ -646,15 +787,15 @@ public class PanoramaStudioUI : MonoBehaviour
             }
             // ----------------------
 
-            // Layer Controls
+            // Layer Controls Toolbar
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Rename", GUILayout.Width(70))) { if (layerManager.activeLayer != null) { renamingNode = layerManager.activeLayer; renameBuffer = layerManager.activeLayer.name; } }
-            if (GUILayout.Button("Delete", GUILayout.Width(60))) layerManager.DeleteActiveLayer();
+            if (GUILayout.Button("Rename", toolbarButtonStyle, GUILayout.Width(60))) { if (layerManager.activeLayer != null) { renamingNode = layerManager.activeLayer; renameBuffer = layerManager.activeLayer.name; } }
+            if (GUILayout.Button("Delete", toolbarButtonStyle, GUILayout.Width(50))) layerManager.DeleteActiveLayer();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("▲", GUILayout.Width(30))) layerManager.MoveActiveLayerUp();
-            if (GUILayout.Button("▼", GUILayout.Width(30))) layerManager.MoveActiveLayerDown();
-            if (GUILayout.Button("▶", GUILayout.Width(30))) layerManager.MoveActiveLayerIn();
-            if (GUILayout.Button("◀", GUILayout.Width(30))) layerManager.MoveActiveLayerOut();
+            if (GUILayout.Button("▲", toolbarButtonStyle, GUILayout.Width(25))) layerManager.MoveActiveLayerUp();
+            if (GUILayout.Button("▼", toolbarButtonStyle, GUILayout.Width(25))) layerManager.MoveActiveLayerDown();
+            if (GUILayout.Button("▶", toolbarButtonStyle, GUILayout.Width(25))) layerManager.MoveActiveLayerIn();
+            if (GUILayout.Button("◀", toolbarButtonStyle, GUILayout.Width(25))) layerManager.MoveActiveLayerOut();
             GUILayout.EndHorizontal();
 
             GUILayout.EndVertical();
@@ -671,7 +812,10 @@ public class PanoramaStudioUI : MonoBehaviour
         GUILayout.Label(typeIcon, GUILayout.Width(typeColWidth), GUILayout.Height(layerRowHeight));
         GUILayout.Space(indent * 15);
         if (node is GroupLayer) { string arrow = node.expanded ? "▼" : "►"; if (GUILayout.Button(arrow, GUILayout.Width(20), GUILayout.Height(layerRowHeight))) node.expanded = !node.expanded; } else GUILayout.Space(20);
-        GUI.color = (layerManager.activeLayer == node) ? Color.green : Color.white;
+        
+        // Subtle active layer highlight instead of bright green
+        GUI.color = (layerManager.activeLayer == node) ? new Color(0.4f, 0.8f, 1.0f, 1f) : Color.white;
+        
         if (renamingNode == node)
         {
             renameBuffer = GUILayout.TextField(renameBuffer, GUILayout.Height(layerRowHeight));
@@ -696,12 +840,12 @@ public class PanoramaStudioUI : MonoBehaviour
             GUILayout.BeginVertical();
             GUILayout.BeginHorizontal();
 
-            // Controls
-            if (GUILayout.Button(layerManager.isPlaying ? "■ STOP" : "▶ PLAY", GUILayout.Width(80))) layerManager.isPlaying = !layerManager.isPlaying;
-            GUILayout.Space(10);
+            // Controls Toolbar
+            if (GUILayout.Button(layerManager.isPlaying ? "■ STOP" : "▶ PLAY", layerManager.isPlaying ? toolbarActiveStyle : toolbarButtonStyle, GUILayout.Width(70))) layerManager.isPlaying = !layerManager.isPlaying;
+            GUILayout.Space(8);
 
-            if (GUILayout.Button("+ Cell", GUILayout.Width(50))) layerManager.ActionAddCell();
-            if (GUILayout.Button("- Cell", GUILayout.Width(50)))
+            if (GUILayout.Button("+ Cell", toolbarButtonStyle, GUILayout.Width(45))) layerManager.ActionAddCell();
+            if (GUILayout.Button("- Cell", toolbarButtonStyle, GUILayout.Width(45)))
             {
                 // Logic to remove the cell assignment at the current frame
                 AnimationLayer animLayer = null;
@@ -714,12 +858,12 @@ public class PanoramaStudioUI : MonoBehaviour
                     layerManager.compositionDirty = true;
                 }
             }
-            GUILayout.Space(10);
-            if (GUILayout.Button("+ Key", GUILayout.Width(50))) layerManager.ActionAddKeyframe();
-            if (GUILayout.Button("- Key", GUILayout.Width(50))) layerManager.ActionRemoveKeyframe();
-            GUILayout.Space(10);
-            if (GUILayout.Button(showGraph ? "Hide Graph" : "Show Graph", GUILayout.Width(80))) { showGraph = !showGraph; fitGraphPending = true; }
-            GUILayout.Space(20);
+            GUILayout.Space(8);
+            if (GUILayout.Button("+ Key", toolbarButtonStyle, GUILayout.Width(45))) layerManager.ActionAddKeyframe();
+            if (GUILayout.Button("- Key", toolbarButtonStyle, GUILayout.Width(45))) layerManager.ActionRemoveKeyframe();
+            GUILayout.Space(8);
+            if (GUILayout.Button(showGraph ? "Hide Graph" : "Show Graph", showGraph ? toolbarActiveStyle : toolbarButtonStyle, GUILayout.Width(80))) { showGraph = !showGraph; fitGraphPending = true; }
+            GUILayout.Space(15);
 
             // Stats
             GUILayout.Label($"Frame: {layerManager.currentFrame + 1}", GUILayout.Width(100));
@@ -767,21 +911,20 @@ public class PanoramaStudioUI : MonoBehaviour
                 layerManager.onionSkinLoop = GUILayout.Toggle(layerManager.onionSkinLoop, "Loop Onion");
                 if (prevOnionLoop != layerManager.onionSkinLoop) layerManager.compositionDirty = true;
 
-                GUILayout.Label($"B:{layerManager.onionBefore}", GUILayout.Width(36));
-                if (GUILayout.Button("-", GUILayout.Width(20))) { layerManager.onionBefore = Mathf.Max(0, layerManager.onionBefore - 1); layerManager.compositionDirty = true; }
-                if (GUILayout.Button("+", GUILayout.Width(20))) { layerManager.onionBefore = Mathf.Min(5, layerManager.onionBefore + 1); layerManager.compositionDirty = true; }
-                GUILayout.Space(20);
+                GUILayout.Label($"B:{layerManager.onionBefore}", GUILayout.Width(25));
+                if (GUILayout.Button("-", toolbarButtonStyle, GUILayout.Width(20))) { layerManager.onionBefore = Mathf.Max(0, layerManager.onionBefore - 1); layerManager.compositionDirty = true; }
+                if (GUILayout.Button("+", toolbarButtonStyle, GUILayout.Width(20))) { layerManager.onionBefore = Mathf.Min(5, layerManager.onionBefore + 1); layerManager.compositionDirty = true; }
+                GUILayout.Space(10);
 
-                GUILayout.Label($"A:{layerManager.onionAfter}", GUILayout.Width(36));
-                if (GUILayout.Button("-", GUILayout.Width(20))) { layerManager.onionAfter = Mathf.Max(0, layerManager.onionAfter - 1); layerManager.compositionDirty = true; }
-                if (GUILayout.Button("+", GUILayout.Width(20))) { layerManager.onionAfter = Mathf.Min(5, layerManager.onionAfter + 1); layerManager.compositionDirty = true; }
-                GUILayout.Space(20);
+                GUILayout.Label($"A:{layerManager.onionAfter}", GUILayout.Width(25));
+                if (GUILayout.Button("-", toolbarButtonStyle, GUILayout.Width(20))) { layerManager.onionAfter = Mathf.Max(0, layerManager.onionAfter - 1); layerManager.compositionDirty = true; }
+                if (GUILayout.Button("+", toolbarButtonStyle, GUILayout.Width(20))) { layerManager.onionAfter = Mathf.Min(5, layerManager.onionAfter + 1); layerManager.compositionDirty = true; }
+                GUILayout.Space(10);
 
-                GUILayout.Label($"Opacity:{layerManager.onionOpacity:F2}", GUILayout.Width(130));
+                GUILayout.Label($"Op:{layerManager.onionOpacity:F1}", GUILayout.Width(45));
                 float prevOpacity = layerManager.onionOpacity;
-                layerManager.onionOpacity = GUILayout.HorizontalSlider(layerManager.onionOpacity, 0f, 1f, GUILayout.Width(120));
+                layerManager.onionOpacity = GUILayout.HorizontalSlider(layerManager.onionOpacity, 0f, 1f, GUILayout.Width(60));
                 if (!Mathf.Approximately(prevOpacity, layerManager.onionOpacity)) layerManager.compositionDirty = true;
-                GUILayout.Space(20);
             }
 
             GUILayout.EndHorizontal();
@@ -843,7 +986,10 @@ public class PanoramaStudioUI : MonoBehaviour
     {
         GUILayout.BeginHorizontal(GUILayout.Height(timelineRowHeight));
         string prefix = (node is CameraLayer) ? "[CAM] " : "";
-        if (layerManager.activeLayer == node) GUI.color = Color.green;
+        
+        // Subtle active layer highlight instead of bright green
+        if (layerManager.activeLayer == node) GUI.color = new Color(0.4f, 0.8f, 1.0f, 1f);
+        
         if (GUILayout.Button(prefix + node.name, GUI.skin.label, GUILayout.Width(layerNameColWidth), GUILayout.Height(timelineRowHeight))) layerManager.activeLayer = node;
         GUI.color = Color.white;
 
